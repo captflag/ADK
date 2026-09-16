@@ -1,5 +1,7 @@
 # Batchward
 
+[![CI](https://github.com/captflag/ADK/actions/workflows/ci.yml/badge.svg)](https://github.com/captflag/ADK/actions/workflows/ci.yml)
+
 An AI back-office team for Indian pharma distributors, built on Google's
 [Agent Development Kit](https://adk.dev).
 
