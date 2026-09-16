@@ -21,6 +21,17 @@ Pre-alpha. The project is in **Phase 0: foundations** — the batch ledger and a
 simulated distributor to build everything else against. Nothing here is ready
 for real business data.
 
+## Development
+
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.12+.
+
+```bash
+uv sync               # create the environment
+uv run pytest         # run the tests
+uv run ruff check     # lint
+uv run ruff format    # format
+```
+
 ## Licence
 
 [Apache 2.0](LICENSE)
