@@ -154,7 +154,7 @@ class _Simulation:
             key = self._new_batch(item, day, remaining_months=self.rng.randint(low, high))
             self._record(
                 MovementType.PURCHASE,
-                _at(day, time(0, 1)),
+                ist_datetime(day, time(0, 1)),
                 key,
                 qty,
                 "OPENING",
@@ -168,7 +168,7 @@ class _Simulation:
             if remaining > 0:
                 self._record(
                     MovementType.WRITE_OFF,
-                    _at(today, time(0, 5)),
+                    ist_datetime(today, time(0, 5)),
                     key,
                     -remaining,
                     f"EXP-{today:%y%m%d}",
@@ -179,7 +179,7 @@ class _Simulation:
             key = self._new_batch(item, today)
             self._record(
                 MovementType.PURCHASE,
-                _at(today, time(9, 0)),
+                ist_datetime(today, time(9, 0)),
                 key,
                 qty,
                 f"PO-{today:%y%m%d}-{next(self._document_ids):05d}",
@@ -220,7 +220,7 @@ class _Simulation:
             self.unmet[item_id] += size - fill
             if fill == 0:
                 continue
-            when = _at(today, time(minute // 60, minute % 60))
+            when = ist_datetime(today, time(minute // 60, minute % 60))
             document = f"INV-{today:%y%m%d}-{next(self._document_ids):05d}"
             rate = price_to_retailer(item.mrp, item.gst_rate)
             for key, qty in allocate_fefo(
@@ -351,5 +351,5 @@ def _round_up(qty: int, step: int) -> int:
     return max(step, math.ceil(qty / step) * step)
 
 
-def _at(day: date, clock: time) -> datetime:
+def ist_datetime(day: date, clock: time) -> datetime:
     return datetime.combine(day, clock, tzinfo=IST)
