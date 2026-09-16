@@ -1,5 +1,5 @@
 from collections import Counter
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 import pytest
@@ -7,6 +7,7 @@ import pytest
 from batchward.core.models import MovementType, PartyKind
 from batchward.sim.business import (
     IST,
+    RETURNS,
     SimConfig,
     location_for,
     price_to_retailer,
@@ -55,7 +56,39 @@ def test_every_sale_names_a_licensed_chemist_and_a_rate(business):
 def test_cold_chain_stock_lives_only_in_the_cold_room(business):
     items = {item.id: item for item in business.catalogue.items}
     for m in business.ledger:
-        assert m.location_id == location_for(items[m.batch.item_id])
+        if m.location_id != RETURNS.id:
+            assert m.location_id == location_for(items[m.batch.item_id])
+
+
+def test_nothing_is_ever_sold_from_the_returns_shelf(business):
+    assert all(m.location_id != RETURNS.id for m in of_kind(business, MovementType.SALE))
+
+
+@pytest.fixture(scope="module")
+def near_expiry_business():
+    # Short remaining shelf life and generous cover leave stock on chemists' shelves.
+    return small_business(days=150, opening_shelf_life_months=(3, 4), cover_days=60)
+
+
+def test_chemists_return_near_expiry_stock_to_the_returns_shelf(near_expiry_business):
+    returns = of_kind(near_expiry_business, MovementType.SALE_RETURN)
+    assert returns
+    for m in returns:
+        assert m.location_id == RETURNS.id
+        assert m.party_id is not None
+        assert (m.batch.expiry - m.at.date()).days == 90
+
+
+def test_returned_stock_is_written_off_when_it_expires(near_expiry_business):
+    returned = {m.batch for m in of_kind(near_expiry_business, MovementType.SALE_RETURN)}
+    written_off = {
+        m.batch
+        for m in of_kind(near_expiry_business, MovementType.WRITE_OFF)
+        if m.location_id == RETURNS.id
+    }
+    expired_in_run = {key for key in returned if key.expiry < START + timedelta(days=150)}
+    assert expired_in_run
+    assert expired_in_run <= written_off
 
 
 def test_every_batch_in_the_ledger_has_a_batch_record(business):
