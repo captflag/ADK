@@ -1,0 +1,24 @@
+name: Slow tests
+
+on:
+  schedule:
+    - cron: "30 20 * * 0" # Sundays 20:30 UTC, early Monday in India
+  workflow_dispatch:
+
+jobs:
+  slow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      # setup-uv publishes no floating major tag, so pin the exact release.
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Run slow tests
+        run: uv run pytest -m slow

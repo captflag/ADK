@@ -28,7 +28,10 @@ packages = ["src/batchward"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tests"]
-addopts = "-q"
+addopts = "-q -m 'not slow' --strict-markers"
+markers = [
+    "slow: minutes-long checks at realistic data volumes; run with `pytest -m slow`",
+]
 
 [tool.ruff]
 line-length = 100
