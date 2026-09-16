@@ -44,7 +44,8 @@ class Ledger:
         self._current: defaultdict[Position, int] = defaultdict(int)
         self._latest_at: dict[Position, datetime] = {}
         self._reversed_by: dict[str, str] = {}
-        self._batches_of_item: defaultdict[tuple[str, str], set[BatchKey]] = defaultdict(set)
+        self._held: defaultdict[tuple[str, str], set[BatchKey]] = defaultdict(set)
+        """Batches with stock on hand now, by (item, location)."""
         for movement in movements:
             self.append(movement)
 
@@ -75,7 +76,11 @@ class Ledger:
         self._by_batch[movement.batch].append(movement)
         self._by_position[position].append(movement)
         self._current[position] += movement.qty
-        self._batches_of_item[(movement.batch.item_id, movement.location_id)].add(movement.batch)
+        held = self._held[(movement.batch.item_id, movement.location_id)]
+        if self._current[position] > 0:
+            held.add(movement.batch)
+        else:
+            held.discard(movement.batch)
         latest = self._latest_at.get(position)
         if latest is None or movement.at > latest:
             self._latest_at[position] = movement.at
@@ -169,9 +174,13 @@ class Ledger:
         return {position: qty for position, qty in totals.items() if qty}
 
     def stock_of_item(self, item_id: str, location_id: str) -> dict[BatchKey, int]:
-        """Current positive balance of every batch of an item at a location."""
-        keys = self._batches_of_item.get((item_id, location_id), ())
-        return {key: qty for key in keys if (qty := self._current.get((key, location_id), 0)) > 0}
+        """Current positive balance of every batch of an item at a location.
+
+        Only batches holding stock are visited, so the cost stays flat however many
+        sold-out batches an item accumulates over the years.
+        """
+        held = self._held.get((item_id, location_id), ())
+        return {key: self._current[(key, location_id)] for key in held}
 
     def movements_for(self, batch: BatchKey) -> list[StockMovement]:
         """Every movement of a batch at any location, oldest first."""

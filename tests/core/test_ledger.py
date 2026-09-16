@@ -82,3 +82,36 @@ def test_movements_for_a_batch_span_locations_oldest_first():
     unrelated = movement(PURCHASE, 5, when=at(2), batch=batch_key("NP1102"))
     ledger = Ledger([moved_in, unrelated, first, moved_out])
     assert ledger.movements_for(batch_key()) == [first, moved_in, moved_out]
+
+
+def test_stock_of_item_lists_only_batches_holding_stock():
+    old, current = batch_key("OLD1"), batch_key("CUR1")
+    ledger = Ledger(
+        [
+            movement(PURCHASE, 10, when=at(1), batch=old),
+            movement(SALE, -10, when=at(2), batch=old),
+            movement(PURCHASE, 7, when=at(3), batch=current),
+        ]
+    )
+    assert ledger.stock_of_item("I001", "GODOWN") == {current: 7}
+
+
+def test_a_sold_out_batch_is_listed_again_when_stock_comes_back():
+    key = batch_key()
+    sale = movement(SALE, -10, when=at(2), party_id="CHEM-1")
+    ledger = Ledger([movement(PURCHASE, 10, when=at(1)), sale])
+    ledger.append(movement(MovementType.SALE_RETURN, 3, when=at(3), party_id="CHEM-1"))
+    assert ledger.stock_of_item("I001", "GODOWN") == {key: 3}
+    ledger.reverse(sale.id, reversal_id="R1", at=at(4), document_ref="CORR-1")
+    assert ledger.stock_of_item("I001", "GODOWN") == {key: 13}
+
+
+def test_stock_of_item_ignores_other_items_and_locations():
+    ledger = Ledger(
+        [
+            movement(PURCHASE, 4, when=at(1)),
+            movement(PURCHASE, 5, when=at(1), batch=batch_key("X1", item_id="I002")),
+            movement(PURCHASE, 6, when=at(1), batch=batch_key("X2"), location_id="COLD_ROOM"),
+        ]
+    )
+    assert ledger.stock_of_item("I001", "GODOWN") == {batch_key(): 4}
