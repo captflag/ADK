@@ -53,3 +53,18 @@ def test_force_replaces_an_existing_file(tmp_path):
     assert main(["demo-marg", str(output), "--start", "2026-03-01", "--days", "2", "--force"]) == 0
     with open_db(output) as connection:
         assert check_layout(connection) == []
+
+
+def test_backtest_scores_every_method_against_the_naive_benchmark(capsys):
+    assert main(["backtest", "--days", "196", "--min-history", "20"]) == 0
+    printed = capsys.readouterr().out
+    assert "28 weeks from 2024-09-02" in printed
+    assert "(benchmark)" in printed
+    assert "smooth:" in printed
+    for method in ("moving average (8 weeks)", "exponential smoothing", "Croston (SBA)", "TSB"):
+        assert method in printed
+
+
+def test_backtest_refuses_a_run_too_short_to_forecast(capsys):
+    assert main(["backtest", "--days", "70", "--min-history", "26"]) == 1
+    assert "at least 27 are needed" in capsys.readouterr().err
