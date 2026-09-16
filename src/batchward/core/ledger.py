@@ -27,6 +27,10 @@ class UnknownMovementError(LedgerError, KeyError):
     pass
 
 
+class InsufficientStockError(LedgerError):
+    pass
+
+
 class Ledger:
     def __init__(self, movements: Iterable[StockMovement] = ()) -> None:
         self._movements: list[StockMovement] = []
@@ -34,6 +38,7 @@ class Ledger:
         self._by_batch: defaultdict[BatchKey, list[StockMovement]] = defaultdict(list)
         self._by_position: defaultdict[Position, list[StockMovement]] = defaultdict(list)
         self._current: defaultdict[Position, int] = defaultdict(int)
+        self._latest_at: dict[Position, datetime] = {}
         for movement in movements:
             self.append(movement)
 
@@ -54,12 +59,45 @@ class Ledger:
         if movement.id in self._by_id:
             raise DuplicateMovementError(f"movement {movement.id} is already recorded")
         position = (movement.batch, movement.location_id)
+        self._ensure_never_negative(position, movement)
         self._movements.append(movement)
         self._by_id[movement.id] = movement
         self._by_batch[movement.batch].append(movement)
         self._by_position[position].append(movement)
         self._current[position] += movement.qty
+        latest = self._latest_at.get(position)
+        if latest is None or movement.at > latest:
+            self._latest_at[position] = movement.at
         return movement
+
+    def _ensure_never_negative(self, position: Position, movement: StockMovement) -> None:
+        """Refuse a movement that would take the position below zero at any time.
+
+        Movements at the same instant are applied in the order they were appended.
+        """
+        if movement.qty > 0:
+            return
+        latest = self._latest_at.get(position)
+        if latest is None or movement.at >= latest:
+            if self._current.get(position, 0) + movement.qty < 0:
+                self._refuse(movement, self._current.get(position, 0) + movement.qty, movement.at)
+            return
+
+        # Backdated: replay the position with the new movement slotted into time order.
+        history = [*self._by_position[position], movement]
+        running = 0
+        for m in sorted(history, key=lambda m: m.at):
+            running += m.qty
+            if running < 0:
+                self._refuse(movement, running, m.at)
+
+    @staticmethod
+    def _refuse(movement: StockMovement, shortfall_balance: int, when: datetime) -> None:
+        raise InsufficientStockError(
+            f"{movement.kind} of {abs(movement.qty)} units of batch {movement.batch.batch_no} "
+            f"at {movement.location_id} would leave {shortfall_balance} units "
+            f"at {when.isoformat()}"
+        )
 
     def balance(self, batch: BatchKey, location_id: str, as_of: datetime | None = None) -> int:
         """Units of a batch at a location, now or at the end of ``as_of``."""
