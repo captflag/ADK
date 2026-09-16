@@ -12,3 +12,4 @@ record that supersedes the old one.
 | [0004](0004-automatic-recall-block.md) | Blocking a recalled batch is the only automatic action | Accepted |
 | [0005](0005-approvals-via-request-input.md) | Approvals use graph `RequestInput` and an approval table | Accepted |
 | [0006](0006-read-marg-read-only.md) | Marg ERP is read over ODBC and written only through its import path | Accepted |
+| [0007](0007-forecast-routing-by-backtest.md) | Forecasting methods are routed by demand pattern, as backtests show | Accepted |
