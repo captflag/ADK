@@ -15,12 +15,6 @@ def count(connection, table):
     return connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
 
 
-@pytest.fixture
-def exported(connection, business_records):
-    export_to_marg(connection, **business_records)
-    return connection
-
-
 def test_writes_one_row_per_party_item_batch_and_movement(exported, business):
     assert count(exported, "ORDER") == len(business.catalogue.companies) + len(business.chemists)
     assert count(exported, "PRO") == len(business.catalogue.items)

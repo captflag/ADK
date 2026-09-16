@@ -2,14 +2,7 @@ from collections import defaultdict
 
 import pytest
 
-from batchward.bridge.marg_export import export_to_marg
 from batchward.bridge.marg_import import MargDataError, read_masters
-
-
-@pytest.fixture
-def exported(connection, business_records):
-    export_to_marg(connection, **business_records)
-    return connection
 
 
 def test_parties_come_back_unchanged(exported, business):
