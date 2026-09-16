@@ -11,15 +11,20 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime
 
 from batchward.bridge.marg_layout import (
     PARTY_TYPES,
+    TIMEZONE,
+    VOUCHER_TYPES,
     parse_date,
     parse_expiry,
     parse_gst,
     parse_money,
+    parse_time,
 )
-from batchward.core.models import Batch, BatchKey, Item, Party, Schedule
+from batchward.core.ledger import Ledger
+from batchward.core.models import Batch, BatchKey, Item, Party, Schedule, StockMovement
 
 
 class MargDataError(ValueError):
@@ -91,3 +96,54 @@ def read_masters(connection: sqlite3.Connection) -> MargMasters:
         stock[key] = qty
 
     return MargMasters(parties=parties, items=items, batches=batches, stock=stock)
+
+
+def read_ledger(connection: sqlite3.Connection, masters: MargMasters) -> Ledger:
+    """Replay Marg's bill lines into a ledger.
+
+    Lines are replayed in time order. Marg bills are often dated but not timed,
+    so many lines share an instant; within one instant, stock coming in is
+    replayed before stock going out, then by bill and line number.
+    """
+    replay: list[tuple[tuple, StockMovement]] = []
+    for row in connection.execute(
+        "SELECT VNO, LINE, VTYPE, VDATE, VTIME, PARTY, PCODE, BATCH, EXPIRY, QTY, RATE, GODOWN "
+        'FROM "DIS"'
+    ):
+        vno, line, vtype, vdate, vtime, party, item_code, batch_no, expiry, qty, rate, godown = row
+        where = f"bill {vno} line {line}"
+        if vtype not in VOUCHER_TYPES:
+            raise MargDataError(f"{where} has unknown voucher type {vtype!r}")
+        if qty <= 0:
+            raise MargDataError(f"{where} has quantity {qty}; Marg quantities are positive")
+        item = masters.items.get(item_code)
+        if item is None:
+            raise MargDataError(f"{where} refers to unknown item {item_code!r}")
+        key = BatchKey(
+            company_id=item.company_id,
+            item_id=item_code,
+            batch_no=batch_no,
+            expiry=parse_expiry(expiry),
+        )
+        if key not in masters.batches:
+            raise MargDataError(f"{where} refers to batch {batch_no} ({expiry}) with no record")
+        if party is not None and party not in masters.parties:
+            raise MargDataError(f"{where} refers to unknown party {party!r}")
+
+        kind, sign = VOUCHER_TYPES[vtype]
+        at = datetime.combine(parse_date(vdate), parse_time(vtime), tzinfo=TIMEZONE)
+        movement = StockMovement(
+            id=f"MARG:{vno}:{line}",
+            at=at,
+            kind=kind,
+            batch=key,
+            location_id=godown,
+            qty=sign * qty,
+            document_ref=vno,
+            party_id=party,
+            rate=None if rate is None else parse_money(rate),
+        )
+        replay.append(((at, sign < 0, vno, line), movement))
+
+    replay.sort(key=lambda entry: entry[0])
+    return Ledger(movement for _, movement in replay)
