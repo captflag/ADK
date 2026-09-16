@@ -8,6 +8,9 @@ requires-python = ">=3.12"
 authors = [{ name = "Divyansh" }]
 dependencies = []
 
+[project.scripts]
+batchward = "batchward.cli:main"
+
 [dependency-groups]
 dev = [
     "hypothesis>=6.100",
