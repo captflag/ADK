@@ -9,7 +9,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from datetime import datetime
 
-from batchward.core.models import BatchKey, StockMovement
+from batchward.core.models import BatchKey, MovementType, StockMovement
 
 type Position = tuple[BatchKey, str]
 """A batch at a location."""
@@ -31,6 +31,10 @@ class InsufficientStockError(LedgerError):
     pass
 
 
+class InvalidReversalError(LedgerError):
+    pass
+
+
 class Ledger:
     def __init__(self, movements: Iterable[StockMovement] = ()) -> None:
         self._movements: list[StockMovement] = []
@@ -39,6 +43,7 @@ class Ledger:
         self._by_position: defaultdict[Position, list[StockMovement]] = defaultdict(list)
         self._current: defaultdict[Position, int] = defaultdict(int)
         self._latest_at: dict[Position, datetime] = {}
+        self._reversed_by: dict[str, str] = {}
         for movement in movements:
             self.append(movement)
 
@@ -59,7 +64,11 @@ class Ledger:
         if movement.id in self._by_id:
             raise DuplicateMovementError(f"movement {movement.id} is already recorded")
         position = (movement.batch, movement.location_id)
+        if movement.reverses is not None:
+            self._ensure_valid_reversal(movement)
         self._ensure_never_negative(position, movement)
+        if movement.reverses is not None:
+            self._reversed_by[movement.reverses] = movement.id
         self._movements.append(movement)
         self._by_id[movement.id] = movement
         self._by_batch[movement.batch].append(movement)
@@ -69,6 +78,47 @@ class Ledger:
         if latest is None or movement.at > latest:
             self._latest_at[position] = movement.at
         return movement
+
+    def reverse(
+        self, movement_id: str, *, reversal_id: str, at: datetime, document_ref: str
+    ) -> StockMovement:
+        """Correct a recorded movement by appending its exact opposite."""
+        original = self.get(movement_id)
+        return self.append(
+            StockMovement(
+                id=reversal_id,
+                at=at,
+                kind=MovementType.REVERSAL,
+                batch=original.batch,
+                location_id=original.location_id,
+                qty=-original.qty,
+                document_ref=document_ref,
+                party_id=original.party_id,
+                rate=original.rate,
+                reverses=original.id,
+            )
+        )
+
+    def is_reversed(self, movement_id: str) -> bool:
+        return movement_id in self._reversed_by
+
+    def _ensure_valid_reversal(self, reversal: StockMovement) -> None:
+        assert reversal.reverses is not None
+        original = self.get(reversal.reverses)
+        if original.kind is MovementType.REVERSAL:
+            raise InvalidReversalError(
+                f"{original.id} is itself a reversal; record the original movement again instead"
+            )
+        if original.id in self._reversed_by:
+            raise InvalidReversalError(
+                f"{original.id} is already reversed by {self._reversed_by[original.id]}"
+            )
+        if (reversal.batch, reversal.location_id) != (original.batch, original.location_id):
+            raise InvalidReversalError("a reversal must be for the same batch and location")
+        if reversal.qty != -original.qty:
+            raise InvalidReversalError("a reversal must exactly cancel the original quantity")
+        if reversal.at < original.at:
+            raise InvalidReversalError("a reversal cannot be dated before the original")
 
     def _ensure_never_negative(self, position: Position, movement: StockMovement) -> None:
         """Refuse a movement that would take the position below zero at any time.
