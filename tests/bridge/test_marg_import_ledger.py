@@ -15,12 +15,6 @@ def rebuild(connection):
     return read_ledger(connection, read_masters(connection))
 
 
-@pytest.fixture(scope="module")
-def rebuilt(marg_template):
-    """The whole ledger replayed from Marg once; tests must only read it."""
-    return rebuild(marg_template)
-
-
 def test_every_movement_comes_back(rebuilt, business):
     assert len(rebuilt) == len(business.ledger)
 
