@@ -17,12 +17,13 @@ from __future__ import annotations
 
 import calendar
 import sqlite3
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time
 from decimal import Decimal
 
+from batchward.core.clock import IST
 from batchward.core.models import MovementType, PartyKind
 
-TIMEZONE = timezone(timedelta(hours=5, minutes=30), name="IST")
+TIMEZONE = IST
 """Marg stores local dates and times with no zone; they are Indian Standard Time."""
 
 TABLES: dict[str, dict[str, str]] = {

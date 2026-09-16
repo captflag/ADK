@@ -13,10 +13,10 @@ from dataclasses import dataclass
 from datetime import date, time, timedelta
 from decimal import Decimal
 
+from batchward.core.clock import ist_datetime
 from batchward.core.models import Batch, BatchKey, MovementType, StockMovement
 from batchward.sim.business import (
     Business,
-    ist_datetime,
     location_for,
     price_to_retailer,
     price_to_stockist,

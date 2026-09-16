@@ -17,9 +17,10 @@ import pytest
 from batchward.bridge.marg_export import export_to_marg
 from batchward.bridge.marg_import import read_ledger, read_masters
 from batchward.bridge.reconcile import reconcile_stock
+from batchward.core.clock import ist_datetime
 from batchward.core.models import MovementType
 from batchward.core.trace import trace_batch
-from batchward.sim.business import SimConfig, ist_datetime, price_to_stockist, simulate
+from batchward.sim.business import SimConfig, price_to_stockist, simulate
 from batchward.sim.scenarios import seed_recall
 
 pytestmark = pytest.mark.slow

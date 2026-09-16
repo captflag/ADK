@@ -1,11 +1,10 @@
 """Small builders that keep tests focused on the behaviour under test."""
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime
 from itertools import count
 
+from batchward.core.clock import IST
 from batchward.core.models import BatchKey, MovementType, StockMovement
-
-IST = timezone(timedelta(hours=5, minutes=30), name="IST")
 
 _ids = count(1)
 

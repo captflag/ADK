@@ -17,10 +17,11 @@ import math
 import random
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from itertools import count
 
+from batchward.core.clock import ist_datetime
 from batchward.core.fefo import allocate_fefo, sellable_stock
 from batchward.core.ledger import Ledger
 from batchward.core.models import (
@@ -35,7 +36,6 @@ from batchward.core.models import (
 )
 from batchward.sim.catalogue import Catalogue, Therapy, build_catalogue
 
-IST = timezone(timedelta(hours=5, minutes=30), name="IST")
 GODOWN = Location(id="GODOWN", name="Main godown")
 COLD_ROOM = Location(id="COLD_ROOM", name="Cold room", cold_room=True)
 RETURNS = Location(id="RETURNS", name="Breakage and expiry shelf")
@@ -419,7 +419,3 @@ def _month_end(day: date, months: int) -> date:
 
 def _round_up(qty: int, step: int) -> int:
     return max(step, math.ceil(qty / step) * step)
-
-
-def ist_datetime(day: date, clock: time) -> datetime:
-    return datetime.combine(day, clock, tzinfo=IST)

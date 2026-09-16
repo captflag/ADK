@@ -2,8 +2,9 @@ from datetime import date, time
 
 import pytest
 
+from batchward.core.clock import ist_datetime
 from batchward.core.trace import trace_batch
-from batchward.sim.business import SimConfig, ist_datetime, simulate
+from batchward.sim.business import SimConfig, simulate
 from batchward.sim.scenarios import seed_recall
 
 

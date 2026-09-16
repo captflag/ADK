@@ -4,9 +4,9 @@ from decimal import Decimal
 
 import pytest
 
+from batchward.core.clock import IST
 from batchward.core.models import MovementType, PartyKind
 from batchward.sim.business import (
-    IST,
     RETURNS,
     SimConfig,
     location_for,
