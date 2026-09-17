@@ -140,6 +140,8 @@ class Location:
     id: str
     name: str
     cold_room: bool = False
+    sellable: bool = True
+    """False for places stock waits but is never sold from, such as a breakage and expiry shelf."""
 
 
 @dataclass(frozen=True, slots=True)

@@ -7,6 +7,7 @@ from batchward.core.models import (
     Batch,
     BatchStatus,
     Item,
+    Location,
     MovementType,
     Party,
     PartyKind,
@@ -134,3 +135,9 @@ class TestStockMovement:
 
     def test_timestamps_keep_their_timezone(self):
         assert movement(MovementType.PURCHASE, 5, when=at(2)).at.utcoffset().seconds == 19800
+
+
+class TestLocation:
+    def test_is_sellable_unless_marked_otherwise(self):
+        assert Location(id="GODOWN", name="Main godown").sellable
+        assert not Location(id="RETURNS", name="Expiry shelf", sellable=False).sellable
