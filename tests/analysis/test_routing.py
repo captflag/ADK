@@ -1,10 +1,15 @@
+from datetime import date
+
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
 from batchward.analysis.demand import DemandPattern
 from batchward.analysis.forecast import exponential_smoothing, moving_average
-from batchward.analysis.routing import ROUTES, forecast_weekly
+from batchward.analysis.routing import ROUTES, daily_rates, forecast_weekly
+from batchward.core.ledger import Ledger
+from batchward.core.models import MovementType
+from factories import at, batch_key, movement
 
 
 def test_every_pattern_with_demand_has_a_route():
@@ -37,3 +42,19 @@ def test_an_item_that_never_sold_is_forecast_at_zero_and_says_why():
 @given(st.lists(st.integers(0, 80), min_size=1, max_size=60))
 def test_a_routed_forecast_stays_within_what_was_ever_sold(history):
     assert 0 <= forecast_weekly(history).units_per_week <= max(history) + 1e-9
+
+
+def test_daily_rates_forecast_each_item_from_the_weeks_before_the_day():
+    unsold = batch_key("X1", item_id="I002")
+    sales = [movement(MovementType.SALE, -2, when=at(d, month=2)) for d in range(1, 29)]
+    ledger = Ledger(
+        [
+            movement(MovementType.PURCHASE, 500, when=at(1)),
+            movement(MovementType.PURCHASE, 500, when=at(1), batch=unsold),
+            *sales,
+            # A sale on the day being planned must not count.
+            movement(MovementType.SALE, -300, when=at(1, month=3)),
+        ]
+    )
+    rates = daily_rates(ledger, on=date(2026, 3, 1), weeks=4)
+    assert rates == {"I001": pytest.approx(2.0)}
