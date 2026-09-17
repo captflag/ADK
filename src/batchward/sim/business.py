@@ -90,6 +90,8 @@ class SimConfig:
     """Share of a batch a chemist still holds that they return as it nears expiry."""
     slow_mover_max_purchases: int = 2
     """A chemist who bought a batch at most this often in the window is not selling it through."""
+    discontinued_share: float = 0.3
+    """Share of demand collapses in which the brand stops selling altogether."""
 
 
 @dataclass(slots=True)
@@ -144,7 +146,9 @@ class _Simulation:
         for item in catalogue.items:
             if self.rng.random() < config.demand_collapse_chance:
                 day = config.start + timedelta(days=self.rng.randrange(max(1, config.days)))
-                self.collapses[item.id] = (day, self.rng.uniform(0.05, 0.3))
+                discontinued = self.rng.random() < config.discontinued_share
+                remaining_share = 0.0 if discontinued else self.rng.uniform(0.05, 0.3)
+                self.collapses[item.id] = (day, remaining_share)
         self.arrivals: defaultdict[date, list[tuple[Item, int]]] = defaultdict(list)
         self.on_order: defaultdict[str, int] = defaultdict(int)
         self.expiring: defaultdict[date, list[BatchKey]] = defaultdict(list)

@@ -173,3 +173,23 @@ def test_a_chemist_who_keeps_buying_a_batch_never_returns_it(near_expiry_busines
             and window_start <= s.at < m.at
         }
         assert len(purchases_before_return) <= 2
+
+
+def test_discontinued_brands_stop_selling_entirely():
+    catalogue = build_catalogue(seed=3, n_companies=4, brands_per_company=(3, 5))
+    config = SimConfig(
+        start=START, days=120, seed=3, n_chemists=25,
+        demand_collapse_chance=1.0, discontinued_share=1.0,
+    )  # fmt: skip
+    business = simulate(config, catalogue)
+    # Every brand collapses to zero at some point, so some day after which an item never
+    # sells again must exist for most of the catalogue.
+    last_sale = {}
+    for m in of_kind(business, MovementType.SALE):
+        last_sale[m.batch.item_id] = max(last_sale.get(m.batch.item_id, m.at), m.at)
+    silent_for_a_month = [
+        item
+        for item, when in last_sale.items()
+        if (START + timedelta(days=120)) - when.date() > timedelta(days=30)
+    ]
+    assert len(silent_for_a_month) >= len(business.catalogue.items) // 4
