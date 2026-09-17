@@ -88,6 +88,8 @@ class SimConfig:
     """How close to expiry chemists send back stock they cannot sell."""
     near_expiry_return_share: float = 0.4
     """Share of a batch a chemist still holds that they return as it nears expiry."""
+    slow_mover_max_purchases: int = 2
+    """A chemist who bought a batch at most this often in the window is not selling it through."""
 
 
 @dataclass(slots=True)
@@ -204,19 +206,30 @@ class _Simulation:
                     )
 
     def _take_back_near_expiry(self, today: date) -> None:
-        """Chemists return part of what they still hold of a batch nearing expiry."""
+        """Chemists return part of a nearly expired batch they are not selling through.
+
+        A chemist who kept buying a batch is selling it and returns nothing. One who
+        bought it only once or twice in the window still has most of it on the shelf,
+        and sends part of that back.
+        """
         window = timedelta(days=self.config.near_expiry_return_days)
         since = ist_datetime(today - window, time(0, 0))
         for key in self.return_due.pop(today, ()):
             held: defaultdict[str, int] = defaultdict(int)
+            purchases: defaultdict[str, set[str]] = defaultdict(set)
             for m in self.ledger.movements_for(key):
                 if m.party_id is None or m.at < since:
                     continue
-                if m.kind in (MovementType.SALE, MovementType.SALE_RETURN):
+                if m.kind is MovementType.SALE:
+                    held[m.party_id] -= m.qty
+                    purchases[m.party_id].add(m.document_ref)
+                elif m.kind is MovementType.SALE_RETURN:
                     held[m.party_id] -= m.qty
             item = self.items[key.item_id]
             document = f"SR-{today:%y%m%d}-{next(self._document_ids):05d}"
             for party_id in sorted(held):
+                if len(purchases[party_id]) > self.config.slow_mover_max_purchases:
+                    continue
                 returned = math.floor(held[party_id] * self.config.near_expiry_return_share)
                 if returned > 0:
                     self._record(

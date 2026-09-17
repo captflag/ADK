@@ -157,3 +157,19 @@ def test_all_timestamps_are_timezone_aware(business):
 def test_the_returns_shelf_is_not_a_sellable_location(business):
     sellable = {location.id: location.sellable for location in business.locations}
     assert sellable == {"GODOWN": True, "COLD_ROOM": True, "RETURNS": False}
+
+
+def test_a_chemist_who_keeps_buying_a_batch_never_returns_it(near_expiry_business):
+    ledger = near_expiry_business.ledger
+    returns = of_kind(near_expiry_business, MovementType.SALE_RETURN)
+    assert returns
+    for m in returns:
+        window_start = m.at - timedelta(days=90)
+        purchases_before_return = {
+            s.document_ref
+            for s in ledger.movements_for(m.batch)
+            if s.kind is MovementType.SALE
+            and s.party_id == m.party_id
+            and window_start <= s.at < m.at
+        }
+        assert len(purchases_before_return) <= 2
