@@ -38,7 +38,7 @@ from batchward.sim.catalogue import Catalogue, Therapy, build_catalogue
 
 GODOWN = Location(id="GODOWN", name="Main godown")
 COLD_ROOM = Location(id="COLD_ROOM", name="Cold room", cold_room=True)
-RETURNS = Location(id="RETURNS", name="Breakage and expiry shelf")
+RETURNS = Location(id="RETURNS", name="Breakage and expiry shelf", sellable=False)
 """Where chemists' near-expiry returns wait to be claimed or written off; never sold from."""
 
 RETAILER_MARGIN = Decimal("0.20")

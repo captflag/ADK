@@ -152,3 +152,8 @@ def test_rejects_more_chemists_than_the_name_pool_holds():
 
 def test_all_timestamps_are_timezone_aware(business):
     assert all(isinstance(m.at, datetime) and m.at.tzinfo is not None for m in business.ledger)
+
+
+def test_the_returns_shelf_is_not_a_sellable_location(business):
+    sellable = {location.id: location.sellable for location in business.locations}
+    assert sellable == {"GODOWN": True, "COLD_ROOM": True, "RETURNS": False}
