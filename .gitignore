@@ -27,3 +27,6 @@ sim-out/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Approvers are real people with phone numbers; keep the list out of git.
+approvers.csv

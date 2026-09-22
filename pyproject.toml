@@ -7,8 +7,10 @@ license = "Apache-2.0"
 requires-python = ">=3.12"
 authors = [{ name = "Divyansh" }]
 dependencies = [
+    "fastapi>=0.115",
     "google-adk==2.9.*",
     "pydantic>=2.13",
+    "uvicorn>=0.30",
 ]
 
 [project.scripts]
