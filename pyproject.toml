@@ -6,7 +6,9 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"
 authors = [{ name = "Divyansh" }]
-dependencies = []
+dependencies = [
+    "pydantic>=2.13",
+]
 
 [project.scripts]
 batchward = "batchward.cli:main"
