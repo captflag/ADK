@@ -19,3 +19,8 @@ def ist_datetime(day: date, clock: time) -> datetime:
 def ist_date(moment: datetime) -> date:
     """The local calendar day in India on which a moment falls."""
     return moment.astimezone(IST).date()
+
+
+def end_of_day(day: date) -> datetime:
+    """The last instant of a local calendar day, so everything ``ist_date`` puts on it counts."""
+    return datetime.combine(day, time.max, tzinfo=IST)

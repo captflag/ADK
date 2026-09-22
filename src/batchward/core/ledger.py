@@ -106,8 +106,16 @@ class Ledger:
             )
         )
 
-    def is_reversed(self, movement_id: str) -> bool:
-        return movement_id in self._reversed_by
+    def is_reversed(self, movement_id: str, as_of: datetime | None = None) -> bool:
+        """Whether a movement has been reversed, now or by the end of ``as_of``.
+
+        A report as of a past moment must count a movement reversed only later
+        as it then stood, just as balances as of that moment do.
+        """
+        reversal_id = self._reversed_by.get(movement_id)
+        if reversal_id is None:
+            return False
+        return as_of is None or self._by_id[reversal_id].at <= as_of
 
     def _ensure_valid_reversal(self, reversal: StockMovement) -> None:
         assert reversal.reverses is not None

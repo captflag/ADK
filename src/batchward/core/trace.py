@@ -15,6 +15,7 @@ from batchward.core.models import BatchKey, MovementType, StockMovement
 
 _SUPPLY = {MovementType.SALE, MovementType.SALE_RETURN}
 _RECEIPT = {MovementType.PURCHASE, MovementType.PURCHASE_RETURN}
+_TRANSFER = {MovementType.TRANSFER_IN, MovementType.TRANSFER_OUT}
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +40,8 @@ class BatchTrace:
     written_off: int
     adjusted: int
     """Net manual adjustments, signed."""
+    in_transit: int
+    """Units transferred out of one location and not yet recorded arriving at another."""
     on_hand: dict[str, int]
     """Units remaining at each location."""
 
@@ -49,7 +52,7 @@ class BatchTrace:
 
 def trace_batch(ledger: Ledger, batch: BatchKey, as_of: datetime | None = None) -> BatchTrace:
     """Trace a batch through the ledger, optionally as it stood at ``as_of``."""
-    received = untraceable = written_off = adjusted = 0
+    received = untraceable = written_off = adjusted = in_transit = 0
     units: defaultdict[str, int] = defaultdict(int)
     supplied_at: defaultdict[str, list[datetime]] = defaultdict(list)
     documents: defaultdict[str, list[str]] = defaultdict(list)
@@ -59,7 +62,7 @@ def trace_batch(ledger: Ledger, batch: BatchKey, as_of: datetime | None = None) 
         if as_of is not None and m.at > as_of:
             continue
         on_hand[m.location_id] += m.qty
-        kind = _effective_kind(ledger, m)
+        kind = effective_kind(ledger, m)
         if kind in _RECEIPT:
             received += m.qty
         elif kind in _SUPPLY:
@@ -75,6 +78,8 @@ def trace_batch(ledger: Ledger, batch: BatchKey, as_of: datetime | None = None) 
             written_off -= m.qty
         elif kind is MovementType.ADJUSTMENT:
             adjusted += m.qty
+        elif kind in _TRANSFER:
+            in_transit -= m.qty
 
     recipients = sorted(
         (
@@ -97,11 +102,12 @@ def trace_batch(ledger: Ledger, batch: BatchKey, as_of: datetime | None = None) 
         untraceable=untraceable,
         written_off=written_off,
         adjusted=adjusted,
+        in_transit=in_transit,
         on_hand={location: qty for location, qty in on_hand.items() if qty},
     )
 
 
-def _effective_kind(ledger: Ledger, movement: StockMovement) -> MovementType:
+def effective_kind(ledger: Ledger, movement: StockMovement) -> MovementType:
     """A reversal counts as the opposite of the kind of movement it reverses."""
     if movement.reverses is None:
         return movement.kind

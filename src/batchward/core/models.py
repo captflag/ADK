@@ -128,6 +128,8 @@ class Party:
     name: str
     drug_licence_no: str | None = None
     gstin: str | None = None
+    address: str | None = None
+    """Rule 65 requires it on every wholesale memo and purchase record."""
 
     def __post_init__(self) -> None:
         # Rule 65: a wholesale memo must carry the buyer's drug licence number.
