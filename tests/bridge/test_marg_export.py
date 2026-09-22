@@ -83,3 +83,11 @@ def test_a_refused_export_leaves_the_database_empty(connection):
     with pytest.raises(ValueError):
         export_to_marg(connection, **_tiny(ledger=ledger))
     assert connection.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()[0] == 0
+
+
+def test_an_expiry_marg_cannot_store_leaves_the_database_empty(connection):
+    key = batch_key(expiry=date(2027, 10, 15))
+    batches = {key: Batch(key=key, manufactured=date(2025, 11, 1), mrp=Decimal(70))}
+    with pytest.raises(ValueError, match="not a month end"):
+        export_to_marg(connection, **_tiny(batches=batches))
+    assert connection.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()[0] == 0

@@ -96,7 +96,11 @@ def test_every_batch_in_the_ledger_has_a_batch_record(business):
 
 
 def test_weekly_purchase_orders_replenish_stock(business):
-    orders = [m for m in of_kind(business, MovementType.PURCHASE) if m.document_ref != "OPENING"]
+    orders = [
+        m
+        for m in of_kind(business, MovementType.PURCHASE)
+        if not m.document_ref.startswith("OPENING")
+    ]
     assert orders
     assert all(m.at.time() == time(9, 0) for m in orders)
 
@@ -193,3 +197,16 @@ def test_discontinued_brands_stop_selling_entirely():
         if (START + timedelta(days=120)) - when.date() > timedelta(days=30)
     ]
     assert len(silent_for_a_month) >= len(business.catalogue.items) // 4
+
+
+def test_every_chemist_has_a_licence_and_an_address_in_its_own_locality(business):
+    for chemist in business.chemists:
+        locality = chemist.name.rsplit(", ", 1)[1]
+        assert chemist.address == f"{locality}, Nagpur, Maharashtra"
+        assert chemist.drug_licence_no
+
+
+def test_every_purchase_names_the_company_it_came_from(business):
+    purchases = of_kind(business, MovementType.PURCHASE)
+    assert purchases
+    assert all(m.party_id == m.batch.company_id for m in purchases)

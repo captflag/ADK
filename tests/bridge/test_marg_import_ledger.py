@@ -33,19 +33,21 @@ def test_movements_are_named_after_their_bill_and_line(rebuilt):
 
 
 def test_rejects_an_unknown_voucher_type(exported):
-    exported.execute("UPDATE \"DIS\" SET VTYPE = 'XX' WHERE VNO = 'OPENING' AND LINE = 3")
-    with pytest.raises(MargDataError, match="bill OPENING line 3 has unknown voucher type 'XX'"):
+    exported.execute("UPDATE \"DIS\" SET VTYPE = 'XX' WHERE VNO = 'OPENING-C01' AND LINE = 1")
+    with pytest.raises(
+        MargDataError, match="bill OPENING-C01 line 1 has unknown voucher type 'XX'"
+    ):
         rebuild(exported)
 
 
 def test_rejects_a_non_positive_quantity(exported):
-    exported.execute("UPDATE \"DIS\" SET QTY = -4 WHERE VNO = 'OPENING' AND LINE = 3")
+    exported.execute("UPDATE \"DIS\" SET QTY = -4 WHERE VNO = 'OPENING-C01' AND LINE = 1")
     with pytest.raises(MargDataError, match="quantity -4"):
         rebuild(exported)
 
 
 def test_rejects_a_line_for_a_batch_with_no_record(exported):
-    exported.execute("UPDATE \"DIS\" SET BATCH = 'GHOST' WHERE VNO = 'OPENING' AND LINE = 3")
+    exported.execute("UPDATE \"DIS\" SET BATCH = 'GHOST' WHERE VNO = 'OPENING-C01' AND LINE = 1")
     with pytest.raises(MargDataError, match="batch GHOST"):
         rebuild(exported)
 
@@ -92,3 +94,27 @@ def test_a_purchase_and_sale_at_the_same_instant_replay_purchase_first(connectio
     rebuilt = rebuild(connection)
     assert [m.kind for m in rebuilt] == [MovementType.PURCHASE, MovementType.SALE]
     assert rebuilt.balance(key, "GODOWN") == 2
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "UPDATE \"DIS\" SET VTIME = NULL WHERE VNO = 'OPENING-C01' AND LINE = 1",
+        "UPDATE \"DIS\" SET VDATE = '31/02/2026' WHERE VNO = 'OPENING-C01' AND LINE = 1",
+        "UPDATE \"DIS\" SET QTY = NULL WHERE VNO = 'OPENING-C01' AND LINE = 1",
+        "UPDATE \"DIS\" SET RATE = 'n/a' WHERE VNO = 'OPENING-C01' AND LINE = 1",
+    ],
+)
+def test_a_line_that_cannot_be_read_is_refused_naming_it(exported, change):
+    exported.execute(change)
+    with pytest.raises(MargDataError, match="bill OPENING-C01 line 1: "):
+        rebuild(exported)
+
+
+def test_a_line_the_ledger_refuses_is_refused_naming_it(exported):
+    vno, line = exported.execute(
+        "SELECT VNO, LINE FROM \"DIS\" WHERE VTYPE = 'S' ORDER BY VNO, LINE"
+    ).fetchone()
+    exported.execute('UPDATE "DIS" SET QTY = 1000000 WHERE VNO = ? AND LINE = ?', (vno, line))
+    with pytest.raises(MargDataError, match=f"bill {vno} line {line}: "):
+        rebuild(exported)

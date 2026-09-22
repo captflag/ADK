@@ -73,3 +73,9 @@ def test_brand_names_read_like_pharma_brands():
 def test_rejects_an_impossible_brand_range(bad):
     with pytest.raises(ValueError, match="brands_per_company"):
         build_catalogue(brands_per_company=bad)
+
+
+def test_every_company_has_the_licence_and_address_a_purchase_record_needs():
+    for company in build_catalogue().companies:
+        assert company.drug_licence_no.startswith("SIM/MFG/")
+        assert company.address.startswith("Plot ")

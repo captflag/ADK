@@ -14,6 +14,7 @@ from decimal import Decimal
 from enum import StrEnum
 
 from batchward.core.models import Item, Party, PartyKind, Schedule
+from batchward.intake.gstin import make_gstin
 
 
 class Therapy(StrEnum):
@@ -88,6 +89,19 @@ _COMPANY_WORDS = (
     "Teesta", "Sone", "Indravati", "Malaprabha", "Bhima", "Koyna", "Girna", "Purna",
     "Damodar", "Mandovi", "Zuari",
 )  # fmt: skip
+_TOWNS = (
+    "Baddi, Himachal Pradesh", "Pithampur, Madhya Pradesh", "Sanand, Gujarat",
+    "Jeedimetla, Telangana", "Verna, Goa",
+)  # fmt: skip
+"""Pharma manufacturing towns; the companies, plots and licence numbers are fictional."""
+_STATE_CODES = {
+    "Himachal Pradesh": 2,
+    "Madhya Pradesh": 23,
+    "Gujarat": 24,
+    "Goa": 30,
+    "Telangana": 36,
+}
+"""GST state codes of the towns above. The GSTINs built from them are fictional but well formed."""
 _COMPANY_SUFFIXES = (
     "Pharma", "Labs", "Lifesciences", "Remedies", "Healthcare", "Biotech", "Formulations",
 )  # fmt: skip
@@ -124,6 +138,12 @@ def build_catalogue(
             id=f"C{index:02d}",
             kind=PartyKind.COMPANY,
             name=f"{word} {rng.choice(_COMPANY_SUFFIXES)}",
+            drug_licence_no=f"SIM/MFG/{index:03d}",
+            address=f"Plot {index}, Industrial Area, {_TOWNS[index % len(_TOWNS)]}",
+            gstin=make_gstin(
+                _STATE_CODES[_TOWNS[index % len(_TOWNS)].split(", ")[1]],
+                f"{word[:3].upper()}C{word[0].upper()}{index:04d}{chr(ord('A') + index % 26)}",
+            ),
         )
         companies.append(company)
         for number, molecule in enumerate(rng.sample(MOLECULES, rng.randint(low, high)), start=1):

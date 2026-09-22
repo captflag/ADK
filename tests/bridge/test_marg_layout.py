@@ -42,6 +42,7 @@ def test_dates_round_trip_in_indian_format():
 
 def test_times_round_trip_to_the_minute():
     assert parse_time(format_time(time(9, 5))) == time(9, 5)
+    assert format_time(time(10, 30, 45)) == "10:30"
 
 
 def test_expiry_is_stored_as_month_and_year():
@@ -66,6 +67,13 @@ def test_gst_converts_between_fraction_and_percentage(fraction, percent):
 
 def test_money_is_read_back_to_the_paisa_without_float_noise():
     assert parse_money(0.1 + 0.2) == Decimal("0.30")
+
+
+@pytest.mark.parametrize(
+    ("value", "paisa"), [(10.125, "10.13"), (0.005, "0.01"), (82.3333, "82.33")]
+)
+def test_money_rounds_half_a_paisa_up_as_indian_bills_do(value, paisa):
+    assert parse_money(value) == Decimal(paisa)
 
 
 def test_every_voucher_type_moves_stock_in_its_kinds_direction():

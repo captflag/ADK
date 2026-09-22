@@ -18,7 +18,7 @@ from __future__ import annotations
 import calendar
 import sqlite3
 from datetime import date, datetime, time
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from batchward.core.clock import IST
 from batchward.core.models import MovementType, PartyKind
@@ -33,6 +33,7 @@ TABLES: dict[str, dict[str, str]] = {
         "TYPE": "TEXT",
         "DLNO": "TEXT",
         "GSTIN": "TEXT",
+        "ADDRESS": "TEXT",
     },
     "PRO": {
         "CODE": "TEXT",
@@ -115,6 +116,10 @@ def parse_date(text: str) -> date:
 
 
 def format_time(clock: time) -> str:
+    """Bill time to the minute, as billing screens show it; seconds are dropped.
+
+    Like the rest of this layout, keeping only minutes is an assumption about Marg.
+    """
     return clock.strftime("%H:%M")
 
 
@@ -145,4 +150,5 @@ def parse_gst(percent: float) -> Decimal:
 
 
 def parse_money(value: float) -> Decimal:
-    return Decimal(str(value)).quantize(Decimal("0.01"))
+    """A stored amount to the paisa, half a paisa rounding up as Indian bills round it."""
+    return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)

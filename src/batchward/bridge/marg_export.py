@@ -39,7 +39,11 @@ def export_to_marg(
     batches: Mapping[BatchKey, Batch],
     ledger: Ledger,
 ) -> None:
-    """Create the Marg tables and fill them. The database must be empty."""
+    """Create the Marg tables and fill them. The database must be empty.
+
+    Every row is built before anything is written, so data Marg cannot hold is
+    refused with a ``ValueError`` and leaves the database untouched.
+    """
     movements = list(ledger)
     for m in movements:
         if m.kind is MovementType.REVERSAL:
@@ -49,59 +53,53 @@ def export_to_marg(
         if m.batch not in batches:
             raise ValueError(f"movement {m.id} refers to batch {m.batch} with no batch record")
 
-    create_schema(connection)
-    _insert(
-        connection,
-        "ORDER",
-        [(p.id, p.name, _PARTY_CODES[p.kind], p.drug_licence_no, p.gstin) for p in parties],
-    )
-    _insert(
-        connection,
-        "PRO",
-        [
-            (
-                i.id,
-                i.brand,
-                i.company_id,
-                i.molecule,
-                i.strength,
-                i.unit,
-                i.hsn,
-                format_gst(i.gst_rate),
-                float(i.mrp),
-                ",".join(sorted(i.schedules)),
-                int(i.dpco_scheduled),
-                int(i.cold_chain),
-            )
-            for i in items
-        ],
-    )
+    party_rows = [
+        (p.id, p.name, _PARTY_CODES[p.kind], p.drug_licence_no, p.gstin, p.address) for p in parties
+    ]
+    item_rows = [
+        (
+            i.id,
+            i.brand,
+            i.company_id,
+            i.molecule,
+            i.strength,
+            i.unit,
+            i.hsn,
+            format_gst(i.gst_rate),
+            float(i.mrp),
+            ",".join(sorted(i.schedules)),
+            int(i.dpco_scheduled),
+            int(i.cold_chain),
+        )
+        for i in items
+    ]
 
     stock: defaultdict[BatchKey, int] = defaultdict(int)
     for (key, _location), qty in ledger.balances().items():
         stock[key] += qty
-    _insert(
-        connection,
-        "PROBAT",
-        [
-            (
-                key.item_id,
-                key.batch_no,
-                format_expiry(key.expiry),
-                format_date(batch.manufactured),
-                float(batch.mrp),
-                stock[key],
-            )
-            for key, batch in batches.items()
-        ],
-    )
+    batch_rows = [
+        (
+            key.item_id,
+            key.batch_no,
+            format_expiry(key.expiry),
+            format_date(batch.manufactured),
+            float(batch.mrp),
+            stock[key],
+        )
+        for key, batch in batches.items()
+    ]
 
     line_numbers: defaultdict[str, int] = defaultdict(int)
-    rows = []
+    bill_rows = []
     for m in movements:
         line_numbers[m.document_ref] += 1
-        rows.append(_voucher_line(m, line_numbers[m.document_ref]))
-    _insert(connection, "DIS", rows)
+        bill_rows.append(_voucher_line(m, line_numbers[m.document_ref]))
+
+    create_schema(connection)
+    _insert(connection, "ORDER", party_rows)
+    _insert(connection, "PRO", item_rows)
+    _insert(connection, "PROBAT", batch_rows)
+    _insert(connection, "DIS", bill_rows)
     connection.commit()
 
 

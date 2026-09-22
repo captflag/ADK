@@ -16,7 +16,7 @@ import calendar
 import math
 import random
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from itertools import count
@@ -34,6 +34,7 @@ from batchward.core.models import (
     PartyKind,
     StockMovement,
 )
+from batchward.core.orders import OrderLine, PurchaseOrder
 from batchward.sim.catalogue import Catalogue, Therapy, build_catalogue
 
 GODOWN = Location(id="GODOWN", name="Main godown")
@@ -103,6 +104,10 @@ class Business:
     batches: dict[BatchKey, Batch]
     unmet_demand: dict[str, int]
     """Units ordered but not supplied, by item id: the demand a stockout hides."""
+    orders: tuple[PurchaseOrder, ...] = ()
+    """Every purchase order placed with a company, earliest first."""
+    order_of: dict[str, str] = field(default_factory=dict)
+    """The purchase order each delivery's movement filled, by movement id."""
 
 
 def simulate(config: SimConfig, catalogue: Catalogue | None = None) -> Business:
@@ -132,6 +137,9 @@ class _Simulation:
         self.rng = random.Random(config.seed)
         self.ledger = Ledger()
         self.batches: dict[BatchKey, Batch] = {}
+        self.batch_numbers: set[tuple[str, str]] = set()
+        """(item, batch number) pairs used: a manufacturer never gives one product's batch
+        number to a second batch, whatever its expiry."""
         self.items = {item.id: item for item in catalogue.items}
         self.items_by_company: defaultdict[str, list[Item]] = defaultdict(list)
         for item in catalogue.items:
@@ -149,12 +157,14 @@ class _Simulation:
                 discontinued = self.rng.random() < config.discontinued_share
                 remaining_share = 0.0 if discontinued else self.rng.uniform(0.05, 0.3)
                 self.collapses[item.id] = (day, remaining_share)
-        self.arrivals: defaultdict[date, list[tuple[Item, int]]] = defaultdict(list)
+        self.arrivals: defaultdict[date, list[tuple[Item, int, str]]] = defaultdict(list)
+        self.orders: list[PurchaseOrder] = []
+        self.order_of: dict[str, str] = {}
         self.on_order: defaultdict[str, int] = defaultdict(int)
         self.expiring: defaultdict[date, list[BatchKey]] = defaultdict(list)
         self.return_due: defaultdict[date, list[BatchKey]] = defaultdict(list)
         self.unmet: defaultdict[str, int] = defaultdict(int)
-        self._movement_ids = count(1)
+        self._next_movement = 1
         self._document_ids = count(1)
 
     def run(self) -> Business:
@@ -174,6 +184,8 @@ class _Simulation:
             ledger=self.ledger,
             batches=self.batches,
             unmet_demand=dict(self.unmet),
+            orders=tuple(self.orders),
+            order_of=self.order_of,
         )
 
     # -- daily steps -----------------------------------------------------------
@@ -191,7 +203,8 @@ class _Simulation:
                 ist_datetime(day, time(0, 1)),
                 key,
                 qty,
-                "OPENING",
+                f"OPENING-{item.company_id}",
+                party_id=item.company_id,
                 rate=price_to_stockist(item.mrp, item.gst_rate),
             )
 
@@ -248,16 +261,18 @@ class _Simulation:
                     )
 
     def _receive(self, today: date) -> None:
-        for item, qty in self.arrivals.pop(today, ()):
+        for item, qty, order in self.arrivals.pop(today, ()):
             short_dated = self.rng.random() < self.config.short_dated_chance
             remaining_months = self.rng.randint(3, 9) if short_dated else None
             key = self._new_batch(item, today, remaining_months=remaining_months)
+            self.order_of[f"SIM{self._next_movement:08d}"] = order
             self._record(
                 MovementType.PURCHASE,
                 ist_datetime(today, time(9, 0)),
                 key,
                 qty,
                 f"PO-{today:%y%m%d}-{next(self._document_ids):05d}",
+                party_id=item.company_id,
                 rate=price_to_stockist(item.mrp, item.gst_rate),
             )
             self.on_order[item.id] -= qty
@@ -266,6 +281,8 @@ class _Simulation:
         for company in self.catalogue.companies:
             if today.weekday() != int(company.id[1:]) % 6:
                 continue
+            number = f"PO/{company.id}/{today:%y%m%d}"
+            lines = []
             for item in self.items_by_company[company.id]:
                 target = math.ceil(self.sales_rate[item.id] * self.config.cover_days)
                 position = self._sellable_units(item, today) + self.on_order[item.id]
@@ -275,8 +292,11 @@ class _Simulation:
                 if self.rng.random() < self.config.scheme_overbuy_chance:
                     qty *= 3
                 arrival = today + timedelta(days=self.rng.randint(*self.config.lead_time_days))
-                self.arrivals[arrival].append((item, qty))
+                self.arrivals[arrival].append((item, qty, number))
                 self.on_order[item.id] += qty
+                lines.append(OrderLine(item.id, qty))
+            if lines:
+                self.orders.append(PurchaseOrder(number, company.id, today, tuple(lines)))
 
     def _trade(self, today: date) -> None:
         orders: list[tuple[int, str, int, str]] = []
@@ -353,15 +373,13 @@ class _Simulation:
             expiry = _month_end(arrival, remaining_months)
             manufactured = min(_month_end(expiry, -shelf_life), arrival - timedelta(days=1))
         prefix = "".join(ch for ch in item.brand.upper() if ch.isalpha())[:2]
-        while True:
-            key = BatchKey(
-                company_id=item.company_id,
-                item_id=item.id,
-                batch_no=f"{prefix}{self.rng.randint(1000, 9999)}",
-                expiry=expiry,
-            )
-            if key not in self.batches:
-                break
+        number = self.rng.randint(1000, 9999)
+        # A number already used is stepped past without drawing again, so the rest of the
+        # simulation is unchanged.
+        while (item.id, f"{prefix}{number}") in self.batch_numbers:
+            number = 1000 + (number - 999) % 9000
+        self.batch_numbers.add((item.id, f"{prefix}{number}"))
+        key = BatchKey(item.company_id, item.id, f"{prefix}{number}", expiry)
         self.batches[key] = Batch(key=key, manufactured=manufactured, mrp=item.mrp)
         self.expiring[expiry].append(key)
         self.return_due[expiry - timedelta(days=self.config.near_expiry_return_days)].append(key)
@@ -379,9 +397,11 @@ class _Simulation:
         rate: Decimal | None = None,
         location_id: str | None = None,
     ) -> None:
+        movement_id = f"SIM{self._next_movement:08d}"
+        self._next_movement += 1
         self.ledger.append(
             StockMovement(
-                id=f"SIM{next(self._movement_ids):08d}",
+                id=movement_id,
                 at=when,
                 kind=kind,
                 batch=key,
@@ -409,6 +429,7 @@ def _make_chemists(rng: random.Random, n: int) -> tuple[Party, ...]:
             kind=PartyKind.CHEMIST,
             name=name,
             drug_licence_no=f"NGP/20B/{rng.randint(10000, 99999)}",
+            address=f"{name.rsplit(', ', 1)[1]}, Nagpur, Maharashtra",
         )
         for index, name in enumerate(rng.sample(names, n), start=1)
     )
