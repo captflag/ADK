@@ -24,4 +24,10 @@ a figure no tool returned.
 - The domain logic is ordinary, unit-tested Python that anyone can review.
 - Agents need well-designed tools rather than long prompts full of formulas.
 - Some natural-sounding summaries, such as rounding "₹1,84,210" to "about ₹1.8
-  lakh", need an explicit tolerance rule in the check.
+  lakh", need an explicit tolerance rule in the check. A figure may round a
+  traced one to the precision written, and may never be more than 10% away from
+  it, so "₹2 lakh" can stand for ₹1,84,210 but "₹1 crore" never for ₹50 lakh.
+  Numbers written in English words are checked like digits.
+- A response that fails the check is replaced by a notice that names no figure,
+  because a figure named even as unverified still reaches the reader. What was
+  held back is logged on the server for investigation, not sent to the client.

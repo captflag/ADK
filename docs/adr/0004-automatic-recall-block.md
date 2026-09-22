@@ -19,6 +19,13 @@ follows — notices to chemists, the report to the Drugs Inspector — is drafte
 for the pharmacist to approve. A human can lift the block in one action, and the
 block and its release are both recorded.
 
+- The block is dated when it is placed, not when the notice arrived, so a notice
+  recorded late shows its stop-sale deadline met late.
+- Receiving the same notice again never blocks a batch a person has released.
+- A product named with a strength matches only an item of exactly that strength:
+  2.5 mg is not 5 mg, and a combination naming a second molecule's strength is
+  not the single-molecule item. A decimal or a hyphenated name is read whole.
+
 ## Consequences
 
 - The worst case of a false match is a temporarily blocked batch, which is
