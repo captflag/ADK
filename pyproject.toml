@@ -7,6 +7,7 @@ license = "Apache-2.0"
 requires-python = ">=3.12"
 authors = [{ name = "Divyansh" }]
 dependencies = [
+    "google-adk==2.9.*",
     "pydantic>=2.13",
 ]
 
@@ -30,9 +31,10 @@ packages = ["src/batchward"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tests"]
-addopts = "-q -m 'not slow' --strict-markers"
+addopts = "-q -m 'not slow and not live' --strict-markers"
 markers = [
     "slow: minutes-long checks at realistic data volumes; run with `pytest -m slow`",
+    "live: calls the real Gemini API; needs GOOGLE_API_KEY; run with `pytest -m live`",
 ]
 
 [tool.ruff]
