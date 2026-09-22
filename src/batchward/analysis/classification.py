@@ -19,7 +19,7 @@ import statistics
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 
@@ -53,14 +53,16 @@ def consumption_value(
     *,
     start: date,
     end: date,
+    as_of: datetime | None = None,
 ) -> dict[str, Decimal]:
     """Units sold of each item between two local dates, inclusive, valued at batch cost.
 
-    Sales of batches with no known cost cannot be valued and are left out.
+    Sales of batches with no known cost cannot be valued and are left out. A
+    reversed sale is left out: reversed by now, or with ``as_of``, by then.
     """
     values: defaultdict[str, Decimal] = defaultdict(Decimal)
     for m in ledger:
-        if m.kind is not MovementType.SALE or ledger.is_reversed(m.id):
+        if m.kind is not MovementType.SALE or ledger.is_reversed(m.id, as_of):
             continue
         cost = costs.get(m.batch)
         if cost is not None and start <= ist_date(m.at) <= end:

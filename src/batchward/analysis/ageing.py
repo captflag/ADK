@@ -14,11 +14,11 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import date, time
+from datetime import date, datetime
 from decimal import Decimal
 
 from batchward.analysis.costs import PAISA
-from batchward.core.clock import ist_date, ist_datetime
+from batchward.core.clock import end_of_day, ist_date
 from batchward.core.ledger import Ledger
 from batchward.core.models import BatchKey, Location, MovementType
 
@@ -65,8 +65,8 @@ def age_bucket(days: int) -> str:
 
 def stock_ageing(ledger: Ledger, costs: Mapping[BatchKey, Decimal], *, on: date) -> list[BatchAge]:
     """Every batch on hand at the end of a day, oldest first."""
-    as_of = _end_of(on)
-    received = _first_arrivals(ledger, as_of=on)
+    as_of = end_of_day(on)
+    received = _first_arrivals(ledger, as_of=as_of)
     ages = []
     for (key, location_id), units in ledger.balances(as_of).items():
         arrived = received[key]
@@ -95,7 +95,7 @@ def dead_stock(
     idle_days: int = 120,
 ) -> list[DeadStock]:
     """Items with sellable stock and no sale for more than ``idle_days``, largest value first."""
-    as_of = _end_of(on)
+    as_of = end_of_day(on)
     positions = ledger.balances(as_of)
     sellable = _sellable_ids(positions, locations)
 
@@ -114,11 +114,16 @@ def dead_stock(
 
     last_sold: dict[str, date] = {}
     first_arrived: dict[str, date] = {}
-    for key, arrived in _first_arrivals(ledger, as_of=on).items():
+    # The clock starts no earlier than the arrival of the stock now on the shelf, so an item
+    # that sold out long ago and was restocked yesterday has had no time to sell yet.
+    on_shelf = {key for key, location_id in positions if location_id in sellable}
+    for key, arrived in _first_arrivals(ledger, as_of=as_of).items():
+        if key not in on_shelf:
+            continue
         current = first_arrived.get(key.item_id)
         first_arrived[key.item_id] = arrived if current is None else min(current, arrived)
     for m in ledger:
-        if m.kind is MovementType.SALE and m.at <= as_of and not ledger.is_reversed(m.id):
+        if m.kind is MovementType.SALE and m.at <= as_of and not ledger.is_reversed(m.id, as_of):
             day = ist_date(m.at)
             if day > last_sold.get(m.batch.item_id, date.min):
                 last_sold[m.batch.item_id] = day
@@ -143,18 +148,19 @@ def dead_stock(
     return sorted(dead, key=lambda d: (-d.value, -d.units, d.item_id))
 
 
-def _first_arrivals(ledger: Ledger, *, as_of: date) -> dict[BatchKey, date]:
-    """The local day each batch first came into the business, up to and including ``as_of``.
+def _first_arrivals(ledger: Ledger, *, as_of: datetime) -> dict[BatchKey, date]:
+    """The local day each batch first came into the business, as it stood at ``as_of``.
 
     A purchase is the arrival; a batch with no purchase on record (an opening
-    adjustment, say) arrived with its first stock-adding movement.
+    adjustment, say) arrived with its first stock-adding movement. A movement
+    reversed only after ``as_of`` still counts.
     """
     purchased: dict[BatchKey, date] = {}
     added: dict[BatchKey, date] = {}
     for m in ledger:
-        day = ist_date(m.at)
-        if day > as_of or m.qty <= 0 or ledger.is_reversed(m.id):
+        if m.at > as_of or m.qty <= 0 or ledger.is_reversed(m.id, as_of):
             continue
+        day = ist_date(m.at)
         if m.kind is MovementType.PURCHASE and day < purchased.get(m.batch, date.max):
             purchased[m.batch] = day
         if day < added.get(m.batch, date.max):
@@ -171,7 +177,3 @@ def _sellable_ids(
     if unknown:
         raise ValueError(f"stock is held at locations not described: {sorted(unknown)}")
     return {location_id for location_id, location in known.items() if location.sellable}
-
-
-def _end_of(day: date):
-    return ist_datetime(day, time(23, 59, 59))

@@ -11,6 +11,7 @@ guessing.
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 from decimal import Decimal
 
 from batchward.core.ledger import Ledger
@@ -19,12 +20,18 @@ from batchward.core.models import BatchKey, MovementType
 PAISA = Decimal("0.01")
 
 
-def batch_costs(ledger: Ledger) -> dict[BatchKey, Decimal]:
-    """Quantity-weighted average purchase rate per batch, to the paisa."""
+def batch_costs(ledger: Ledger, *, as_of: datetime | None = None) -> dict[BatchKey, Decimal]:
+    """Quantity-weighted average purchase rate per batch, to the paisa.
+
+    With ``as_of``, only purchases made by then count, and a purchase reversed
+    later still does, so a past day is valued as it stood.
+    """
     units: defaultdict[BatchKey, int] = defaultdict(int)
     spend: defaultdict[BatchKey, Decimal] = defaultdict(Decimal)
     for m in ledger:
-        if m.kind is not MovementType.PURCHASE or m.rate is None or ledger.is_reversed(m.id):
+        if m.kind is not MovementType.PURCHASE or m.rate is None:
+            continue
+        if (as_of is not None and m.at > as_of) or ledger.is_reversed(m.id, as_of):
             continue
         units[m.batch] += m.qty
         spend[m.batch] += m.rate * m.qty

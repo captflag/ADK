@@ -1,9 +1,10 @@
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 
 from batchward.analysis.expiry import RiskReason, expiry_exposure
+from batchward.core.clock import IST
 from batchward.core.ledger import Ledger
 from batchward.core.models import Location, MovementType
 from factories import at, batch_key, movement
@@ -74,6 +75,20 @@ def test_stock_is_not_sold_on_its_expiry_date():
     ledger = stock((batch_key(expiry=date(2026, 1, 2)), 5, "GODOWN"))
     (risk,) = exposure(ledger, {"I001": 3.0})
     assert (risk.expected_to_sell, risk.units_at_risk) == (3, 2)
+
+
+def test_demand_that_exactly_covers_a_batch_is_not_cut_short_by_float_rounding():
+    # 17 units in 8 weeks is 17/56 a day: exactly 51 units in 168 days, 50.999... as a float.
+    ledger = stock((batch_key(expiry=ON + timedelta(days=168)), 51, "GODOWN"))
+    assert exposure(ledger, {"I001": (17 / 8) / 7}) == []
+
+
+def test_counts_a_sale_in_the_last_second_of_the_day():
+    key = batch_key(expiry=date(2026, 1, 31))
+    ledger = stock((key, 10, "GODOWN"))
+    last_second = datetime(2026, 1, 1, 23, 59, 59, 500_000, tzinfo=IST)
+    ledger.append(movement(MovementType.SALE, -10, when=last_second, batch=key))
+    assert exposure(ledger, {}) == []
 
 
 def test_an_item_without_a_forecast_is_treated_as_not_selling():

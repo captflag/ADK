@@ -16,15 +16,16 @@ claim early, not a certainty.
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import date, time
+from datetime import date
 from decimal import Decimal
 from enum import StrEnum
 
 from batchward.analysis.costs import PAISA
-from batchward.core.clock import ist_datetime
+from batchward.core.clock import end_of_day
 from batchward.core.ledger import Ledger
 from batchward.core.models import BatchKey, Location
 
@@ -64,7 +65,7 @@ def expiry_exposure(
     forecast. ``within_days`` limits the report to batches expiring that soon.
     """
     known = {location.id: location for location in locations}
-    positions = ledger.balances(ist_datetime(on, time(23, 59, 59)))
+    positions = ledger.balances(end_of_day(on))
     unknown = {location_id for _, location_id in positions} - known.keys()
     if unknown:
         raise ValueError(f"stock is held at locations not described: {sorted(unknown)}")
@@ -94,7 +95,8 @@ def expiry_exposure(
         ):
             days_left = (key.expiry - on).days
             capacity = max(0.0, rate * days_left - taken)
-            sold = min(units, int(capacity))
+            # The tolerance stops float noise (50.999...) costing a whole unit.
+            sold = min(units, math.floor(capacity + 1e-9))
             taken += sold
             if sold < units:
                 risks.append(

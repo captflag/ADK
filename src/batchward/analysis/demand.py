@@ -13,7 +13,7 @@ import statistics
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 
 from batchward.core.clock import ist_date
@@ -26,17 +26,21 @@ CV2_CUTOFF = 0.49
 """Squared coefficient of variation of demand sizes above which demand counts as erratic."""
 
 
-def daily_sales(ledger: Ledger, *, start: date, end: date) -> dict[str, list[int]]:
+def daily_sales(
+    ledger: Ledger, *, start: date, end: date, as_of: datetime | None = None
+) -> dict[str, list[int]]:
     """Units sold of each item on each local day from ``start`` to ``end``, inclusive.
 
-    Items with no sales in the window are absent from the result.
+    Items with no sales in the window are absent from the result. A sale is left
+    out if it has been reversed, or with ``as_of``, if it had been reversed by then,
+    so a forecast made on a past day does not use corrections made after it.
     """
     days = (end - start).days + 1
     if days <= 0:
         raise ValueError("end must not be before start")
     series: defaultdict[str, list[int]] = defaultdict(lambda: [0] * days)
     for m in ledger:
-        if m.kind is not MovementType.SALE or ledger.is_reversed(m.id):
+        if m.kind is not MovementType.SALE or ledger.is_reversed(m.id, as_of):
             continue
         day = ist_date(m.at)
         if start <= day <= end:

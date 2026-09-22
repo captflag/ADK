@@ -58,3 +58,11 @@ def test_daily_rates_forecast_each_item_from_the_weeks_before_the_day():
     )
     rates = daily_rates(ledger, on=date(2026, 3, 1), weeks=4)
     assert rates == {"I001": pytest.approx(2.0)}
+
+
+def test_daily_rates_for_a_past_day_do_not_use_corrections_made_after_it():
+    wrong = movement(MovementType.SALE, -56, when=at(10, month=2))
+    ledger = Ledger([movement(MovementType.PURCHASE, 500, when=at(1)), wrong])
+    ledger.reverse(wrong.id, reversal_id="R1", at=at(5, month=3), document_ref="CORR-1")
+    assert daily_rates(ledger, on=date(2026, 3, 1), weeks=4) == {"I001": pytest.approx(2.0)}
+    assert daily_rates(ledger, on=date(2026, 3, 29), weeks=8) == {}

@@ -49,6 +49,15 @@ class TestConsumptionValue:
         costs = {known: Decimal("5.00")}
         assert consumption_value(ledger, costs, start=date(2026, 1, 1), end=date(2026, 1, 9)) == {}
 
+    def test_as_of_a_past_moment_a_sale_reversed_only_later_still_counts(self):
+        sale = movement(MovementType.SALE, -10, when=at(2))
+        ledger = Ledger([movement(MovementType.PURCHASE, 100, when=at(1)), sale])
+        ledger.reverse(sale.id, reversal_id="R1", at=at(20), document_ref="CORR-1")
+        window = dict(start=date(2026, 1, 1), end=date(2026, 1, 9))
+        costs = {batch_key(): Decimal("5.00")}
+        assert consumption_value(ledger, costs, **window, as_of=at(9)) == {"I001": Decimal("50.00")}
+        assert consumption_value(ledger, costs, **window) == {}
+
 
 class TestClassifyAbc:
     def test_the_items_carrying_the_first_80_percent_of_value_are_a(self):

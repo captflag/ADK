@@ -1,9 +1,10 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
 
 from batchward.analysis.ageing import age_bucket, dead_stock, stock_ageing
+from batchward.core.clock import IST
 from batchward.core.ledger import Ledger
 from batchward.core.models import Location, MovementType
 from factories import at, batch_key, movement
@@ -70,6 +71,19 @@ class TestStockAgeing:
         (age,) = stock_ageing(ledger, {}, on=day(10))
         assert age.received == day(3)
 
+    def test_a_purchase_reversed_after_the_day_still_ages_the_stock_it_brought(self):
+        purchase = movement(PURCHASE, 10, when=at(1))
+        ledger = Ledger([purchase])
+        ledger.reverse(purchase.id, reversal_id="R1", at=at(10), document_ref="CORR-1")
+        (age,) = stock_ageing(ledger, {}, on=day(5))
+        assert (age.units, age.received, age.age_days) == (10, day(1), 4)
+        assert stock_ageing(ledger, {}, on=day(10)) == []
+
+    def test_counts_a_movement_in_the_last_second_of_the_day(self):
+        last_second = datetime(2026, 1, 5, 23, 59, 59, 500_000, tzinfo=IST)
+        ledger = Ledger([movement(PURCHASE, 10, when=at(1)), movement(SALE, -10, when=last_second)])
+        assert stock_ageing(ledger, {}, on=day(5)) == []
+
 
 class TestDeadStock:
     def test_flags_an_item_that_has_not_sold_for_longer_than_the_limit(self):
@@ -92,6 +106,34 @@ class TestDeadStock:
         assert dead_stock(ledger, {}, LOCATIONS, on=day(31), idle_days=30) == []
         (dead,) = dead_stock(ledger, {}, LOCATIONS, on=day(28, 2), idle_days=30)
         assert (dead.last_sold, dead.idle_days) == (None, 39)
+
+    def test_an_item_restocked_after_selling_out_long_ago_gets_time_to_sell_again(self):
+        restocked = batch_key("AZ5001")
+        ledger = Ledger(
+            [
+                movement(PURCHASE, 50, when=at(1)),
+                movement(SALE, -50, when=at(2)),
+                movement(PURCHASE, 50, when=at(1, month=6), batch=restocked),
+            ]
+        )
+        assert dead_stock(ledger, {}, LOCATIONS, on=day(3, 6), idle_days=120) == []
+        (dead,) = dead_stock(ledger, {}, LOCATIONS, on=day(1, 11), idle_days=120)
+        assert (dead.last_sold, dead.idle_days) == (day(2), (day(1, 11) - day(1, 6)).days)
+
+    def test_a_sale_reversed_after_the_day_still_counts_on_that_day(self):
+        sale = movement(SALE, -5, when=at(20))
+        ledger = Ledger([movement(PURCHASE, 50, when=at(1)), sale])
+        ledger.reverse(sale.id, reversal_id="R1", at=at(1, month=3), document_ref="CORR-1")
+        assert dead_stock(ledger, {}, LOCATIONS, on=day(25), idle_days=10) == []
+        (dead,) = dead_stock(ledger, {}, LOCATIONS, on=day(10, 3), idle_days=10)
+        assert (dead.last_sold, dead.idle_days) == (None, 68)
+
+    def test_a_purchase_reversed_after_the_day_still_counts_on_that_day(self):
+        purchase = movement(PURCHASE, 10, when=at(1))
+        ledger = Ledger([purchase])
+        ledger.reverse(purchase.id, reversal_id="R1", at=at(20), document_ref="CORR-1")
+        (dead,) = dead_stock(ledger, {}, LOCATIONS, on=day(15), idle_days=10)
+        assert (dead.units, dead.idle_days) == (10, 14)
 
     def test_ignores_stock_that_is_not_sellable(self):
         ledger = Ledger([movement(PURCHASE, 50, when=at(1), location_id="RETURNS")])

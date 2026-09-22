@@ -31,6 +31,15 @@ def test_a_reversed_purchase_does_not_affect_cost():
     assert batch_costs(ledger) == {batch_key(): Decimal("50.00")}
 
 
+def test_cost_as_of_a_moment_counts_only_purchases_and_reversals_made_by_then():
+    wrong = bought(10, "99.00", day=5)
+    ledger = Ledger([bought(10, "10.00"), wrong, bought(10, "30.00", day=20)])
+    ledger.reverse(wrong.id, reversal_id="R1", at=at(15), document_ref="CORR-1")
+    assert batch_costs(ledger, as_of=at(10)) == {batch_key(): Decimal("54.50")}
+    assert batch_costs(ledger, as_of=at(15)) == {batch_key(): Decimal("10.00")}
+    assert batch_costs(ledger) == {batch_key(): Decimal("20.00")}
+
+
 def test_a_batch_bought_without_a_rate_has_no_cost():
     ledger = Ledger([movement(PURCHASE, 10, when=at(1))])
     assert batch_costs(ledger) == {}
