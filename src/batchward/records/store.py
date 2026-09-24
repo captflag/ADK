@@ -8,8 +8,9 @@ approvals people gave before anything was written for Marg to import (ADR 0005),
 what each approved bill received against its purchase order (ADR 0017), and
 each company's return terms with the expiry claims made on it and the credit
 notes that settle them (ADR 0018), the messages approvers sent (ADR 0019),
-the purchase orders placed on approval (ADR 0020), and each morning brief
-sent (ADR 0021). They are kept here, in a database file of their own (ADR 0010).
+the purchase orders placed on approval (ADR 0020), each morning brief sent
+(ADR 0021), and how many units each product's case holds (ADR 0023). They are
+kept here, in a database file of their own (ADR 0010).
 
 Like the ledger (ADR 0001) these records are only ever added to. The database
 enforces that itself: triggers refuse every UPDATE and DELETE, so a mistake is
@@ -32,6 +33,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
+from batchward.buying.cases import CaseSize, CaseTable
 from batchward.claims.claim import Claim, ClaimLine, Settlement
 from batchward.claims.terms import ReturnTerms, TermsTable
 from batchward.compliance.prices import CeilingPrice, CeilingTable
@@ -215,6 +217,16 @@ CREATE TABLE briefs (
 );
 """ + _only_ever_added_to("briefs")
 
+_CASES = """
+CREATE TABLE case_sizes (
+    item_id TEXT NOT NULL,
+    units INTEGER NOT NULL CHECK (units > 0),
+    effective_from TEXT NOT NULL,
+    reference TEXT NOT NULL,
+    PRIMARY KEY (item_id, effective_from)
+);
+""" + _only_ever_added_to("case_sizes")
+
 MIGRATIONS: tuple[str, ...] = (
     _RECALLS,
     _CEILINGS,
@@ -225,6 +237,7 @@ MIGRATIONS: tuple[str, ...] = (
     _MESSAGES,
     _ORDERS,
     _BRIEFS,
+    _CASES,
 )
 """Each entry takes the database from the schema before it to the next. Never edit one."""
 SCHEMA_VERSION = len(MIGRATIONS)
@@ -238,6 +251,7 @@ _TABLES: tuple[set[str], ...] = (
     {"channel_messages"},
     {"purchase_orders", "purchase_order_lines"},
     {"briefs"},
+    {"case_sizes"},
 )
 """The tables each migration creates, to recognise a file that only claims to be one."""
 
@@ -804,6 +818,38 @@ class RecordStore:
         rows = self._connection.execute("SELECT * FROM channel_messages ORDER BY rowid")
         return [(c, i, s, b, datetime.fromisoformat(t)) for c, i, s, b, t in rows]
 
+    def save_case_size(self, size: CaseSize) -> bool:
+        """Record how many units a product's case holds. False if the same is recorded.
+
+        A different size for a product from a date already recorded is refused; a
+        change of packing takes effect on its own date.
+        """
+        with self.atomically():
+            row = self._connection.execute(
+                "SELECT * FROM case_sizes WHERE item_id = ? AND effective_from = ?",
+                (size.item_id, size.effective_from.isoformat()),
+            ).fetchone()
+            if row is not None:
+                if _read(_case_size, row, "case size") != size:
+                    raise RecordsError(
+                        f"a different case size for {size.item_id} from "
+                        f"{size.effective_from.isoformat()} is already recorded"
+                    )
+                return False
+            self._connection.execute(
+                "INSERT INTO case_sizes VALUES (?, ?, ?, ?)",
+                (size.item_id, size.units, size.effective_from.isoformat(), size.reference),
+            )
+            return True
+
+    def case_sizes(self) -> list[CaseSize]:
+        """Every case size recorded, by product and then date."""
+        rows = self._connection.execute("SELECT * FROM case_sizes ORDER BY item_id, effective_from")
+        return [_read(_case_size, row, "case size") for row in rows]
+
+    def case_table(self) -> CaseTable:
+        return CaseTable(self.case_sizes())
+
     def save_brief(self, brief: KeptBrief) -> None:
         """Keep a morning brief as it is about to be sent, so it can be read back later."""
         if brief.made_at.tzinfo is None:
@@ -962,6 +1008,11 @@ def _settlement(row: tuple) -> Settlement:
         received_on=date.fromisoformat(row[3]),
         recorded_by=row[4],
     )
+
+
+def _case_size(row: tuple) -> CaseSize:
+    item_id, units, effective_from, reference = row
+    return CaseSize(item_id, int(units), date.fromisoformat(effective_from), reference)
 
 
 def _brief(row: tuple) -> KeptBrief:
