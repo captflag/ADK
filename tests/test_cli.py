@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from batchward import price_cli
+from batchward.agents.data import load_marg
 from batchward.bridge.marg_contract import check_layout
 from batchward.bridge.marg_import import read_ledger, read_masters
 from batchward.buying.planning import plan_for
@@ -857,6 +858,75 @@ def test_answering_a_request_that_does_not_exist_is_refused(deliveries, tmp_path
     assert "no request A-0099" in capsys.readouterr().err
     assert main(["approvals", "list", "--records", str(tmp_path / "none.sqlite")]) == 1
     assert "no records database" in capsys.readouterr().err
+
+
+def test_breakage_is_marked_listed_claimed_and_left_out_of_the_expiry_windows(
+    deliveries, tmp_path, capsys
+):
+    records, marg = tmp_path / "rec.sqlite", deliveries / "marg.sqlite"
+    shutil.copy(deliveries / "rec.sqlite", records)
+    stock = ["--marg", str(marg), "--records", str(records)]
+    breakage = ["claims", "breakage", "list", *stock]
+    capsys.readouterr()
+
+    assert main(breakage) == 0
+    printed = capsys.readouterr().out
+    assert "Breakage in stock on " in printed  # the demo seeds and marks chemists' breakage
+    assert main(["claims", "breakage", "list", *stock, "--records", str(tmp_path / "bare.sqlite")])
+    capsys.readouterr()
+    with RecordStore(records, create=False) as store:
+        marked = {reason.document_ref for reason in store.return_reasons()}
+    returned = next(
+        movement
+        for movement in load_marg(marg).ledger
+        if movement.kind is MovementType.SALE_RETURN
+        and movement.qty > 0
+        and movement.document_ref not in marked
+    )
+    document = returned.document_ref
+    mark = [
+        "claims",
+        "returns",
+        "mark",
+        document.lower(),
+        "--records",
+        str(records),
+        "--by",
+        "Ravi",
+    ]
+    assert main([*mark, "--reason", "breakage"]) == 0
+    printed = capsys.readouterr().out
+    assert f"Recorded {document} as breakage, by Ravi." in printed
+    assert "claims breakage draft" in printed
+    assert main([*mark, "--reason", "breakage"]) == 0
+    assert f"{document} is already recorded as breakage." in capsys.readouterr().out
+    assert main([*mark, "--reason", "expiry"]) == 1
+    assert "already recorded as breakage, not expiry" in capsys.readouterr().err
+
+    assert main(["claims", "returns", "list", "--records", str(records), "--marg", str(marg)]) == 0
+    printed = capsys.readouterr().out
+    assert f"  {document}" in printed and "breakage" in printed
+    assert "Returns in Marg with no reason recorded" in printed
+
+    assert main(breakage) == 0
+    printed = capsys.readouterr().out
+    assert "Breakage in stock on " in printed and returned.batch.batch_no in printed
+    company = returned.batch.company_id
+    draft = ["claims", "breakage", "draft", company, *stock, "--out", str(tmp_path / "breakage")]
+    assert main([*draft, "--approve-by", "Ravi"]) == 0
+    printed = capsys.readouterr().out
+    assert f"Breakage claim BR/{company}/" in printed and "Approved by Ravi." in printed
+    letter = next((tmp_path / "breakage").glob("BR-*.claim-letter.txt")).read_text(encoding="utf-8")
+    assert letter.startswith("BREAKAGE CLAIM")
+    with RecordStore(records, create=False) as store:
+        (claim,) = [c for c in store.claims() if c.number.startswith("BR/")]
+        approval = store.approval(f"claim:{claim.number}")
+    assert approval.kind == "breakage claim"
+    # The claim holds the units until Marg shows the return, so there is nothing left to draft.
+    assert main([*draft]) == 0
+    assert "is in stock to claim" in capsys.readouterr().out
+    windows = {w.batch: dict(w.by_location) for w in draft_for(marg, records).windows}
+    assert windows.get(returned.batch, {}).get(returned.location_id) is None
 
 
 def test_claims_from_windows_to_approval_to_credit_note(deliveries, tmp_path, capsys):

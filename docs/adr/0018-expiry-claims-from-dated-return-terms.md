@@ -77,3 +77,10 @@ stock bought before the rate cut of 22 September 2025 may be higher than today's
 Units that arrive damaged are now debited back on the bill when the delivery is
 counted (ADR 0024). Breakage found later, in the godown or returned by
 chemists, is still not claimed, for the reason given above.
+
+## Amendment, 2026-09-24: breakage chemists send back
+
+A chemist's return can now carry the reason it came back, recorded against the
+credit note, and what is marked as breakage is claimed at once instead of
+waiting for an expiry window (ADR 0025). Those units are left out of the windows
+here, so nothing is claimed twice.

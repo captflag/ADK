@@ -121,6 +121,18 @@ business data. What exists so far:
   sheet, a letter asking for a section 34 credit note and a Marg return voucher,
   made only on approval, and tracked until the company's credit notes settle it
   ([ADR 0018](docs/adr/0018-expiry-claims-from-dated-return-terms.md)).
+  A chemist's return carries the reason it came back, recorded against the credit
+  note, and what is marked as breakage is claimed at once, whatever its expiry,
+  and left out of the expiry windows
+  ([ADR 0025](docs/adr/0025-breakage-claimed-from-a-recorded-reason.md)).
+- **A morning brief**, worked out in code rather than by a model: at most five
+  lines, each with a rupee figure, in a fixed order of urgency (recalls, price
+  blocks, claim windows closing, what to order, credit owed, expiry, dead stock,
+  past overcharges), then the requests waiting for approval. It is kept in the
+  records and sent to approvers on WhatsApp, as a message within 24 hours of
+  their last writing and as an approved template otherwise, followed by each
+  waiting request with its buttons
+  ([ADR 0021](docs/adr/0021-morning-brief-worked-out-in-python.md)).
 - **Batchward's own records**: recall notices, blocks and their release are kept
   in a SQLite database of their own, which refuses any edit or deletion
   ([ADR 0010](docs/adr/0010-own-records-database.md)). Receiving a notice and
@@ -211,7 +223,11 @@ soon and what was lost; the demo records every simulated company's return terms,
 and `claims terms import <terms.csv>` records real ones. `claims draft <company>
 ... --out <folder>` puts a claim up for approval, `claims list` shows what each
 claim still waits for, and `claims settle <claim> --credit-note ... --amount ...`
-records a company's credit note.
+records a company's credit note. `claims returns mark <credit note> --reason
+breakage --by <name>` records why a chemist's stock came back; `claims breakage
+list` shows what is claimable as breakage and `claims breakage draft <company>`
+puts a claim up for approval. The demo seeds a few chemists' breakage returns
+and marks them.
 
 To answer on WhatsApp, fill in the `WHATSAPP_*` settings and `BATCHWARD_APPROVERS`
 in `.env` (see `.env.example`), list approvers in a CSV of `phone,name`, and run

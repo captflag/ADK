@@ -9,8 +9,9 @@ what each approved bill received against its purchase order (ADR 0017), and
 each company's return terms with the expiry claims made on it and the credit
 notes that settle them (ADR 0018), the messages approvers sent (ADR 0019),
 the purchase orders placed on approval (ADR 0020), each morning brief sent
-(ADR 0021), and how many units each product's case holds (ADR 0023). They are
-kept here, in a database file of their own (ADR 0010).
+(ADR 0021), how many units each product's case holds (ADR 0023), and why stock
+came back from a chemist (ADR 0025). They are kept here, in a database file of
+their own (ADR 0010).
 
 Like the ledger (ADR 0001) these records are only ever added to. The database
 enforces that itself: triggers refuse every UPDATE and DELETE, so a mistake is
@@ -34,6 +35,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from batchward.buying.cases import CaseSize, CaseTable
+from batchward.claims.breakage import Reason, ReturnReason, normalise
 from batchward.claims.claim import Claim, ClaimLine, Settlement
 from batchward.claims.terms import ReturnTerms, TermsTable
 from batchward.compliance.prices import CeilingPrice, CeilingTable
@@ -227,6 +229,16 @@ CREATE TABLE case_sizes (
 );
 """ + _only_ever_added_to("case_sizes")
 
+_REASONS = """
+CREATE TABLE return_reasons (
+    document_ref TEXT PRIMARY KEY,
+    reason TEXT NOT NULL,
+    recorded_by TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    note TEXT NOT NULL
+);
+""" + _only_ever_added_to("return_reasons")
+
 MIGRATIONS: tuple[str, ...] = (
     _RECALLS,
     _CEILINGS,
@@ -238,6 +250,7 @@ MIGRATIONS: tuple[str, ...] = (
     _ORDERS,
     _BRIEFS,
     _CASES,
+    _REASONS,
 )
 """Each entry takes the database from the schema before it to the next. Never edit one."""
 SCHEMA_VERSION = len(MIGRATIONS)
@@ -252,6 +265,7 @@ _TABLES: tuple[set[str], ...] = (
     {"purchase_orders", "purchase_order_lines"},
     {"briefs"},
     {"case_sizes"},
+    {"return_reasons"},
 )
 """The tables each migration creates, to recognise a file that only claims to be one."""
 
@@ -818,6 +832,40 @@ class RecordStore:
         rows = self._connection.execute("SELECT * FROM channel_messages ORDER BY rowid")
         return [(c, i, s, b, datetime.fromisoformat(t)) for c, i, s, b, t in rows]
 
+    def save_return_reason(self, reason: ReturnReason) -> bool:
+        """Record why stock came back on a credit note. False if the same is recorded.
+
+        A different reason for a credit note already recorded is refused: a
+        mistake is corrected by a person, not by writing over the record.
+        """
+        document = normalise(reason.document_ref)
+        with self.atomically():
+            row = self._connection.execute(
+                "SELECT * FROM return_reasons WHERE document_ref = ?", (document,)
+            ).fetchone()
+            if row is not None:
+                if _read(_return_reason, row, "return reason").reason is not reason.reason:
+                    raise RecordsError(
+                        f"{document} is already recorded as {row[1]}, not {reason.reason}"
+                    )
+                return False
+            self._connection.execute(
+                "INSERT INTO return_reasons VALUES (?, ?, ?, ?, ?)",
+                (
+                    document,
+                    str(reason.reason),
+                    reason.recorded_by,
+                    reason.at.isoformat(),
+                    reason.note,
+                ),
+            )
+            return True
+
+    def return_reasons(self) -> list[ReturnReason]:
+        """Why each credit note's stock came back, in the order recorded."""
+        rows = self._connection.execute("SELECT * FROM return_reasons ORDER BY rowid")
+        return [_read(_return_reason, row, "return reason") for row in rows]
+
     def save_case_size(self, size: CaseSize) -> bool:
         """Record how many units a product's case holds. False if the same is recorded.
 
@@ -1007,6 +1055,13 @@ def _settlement(row: tuple) -> Settlement:
         amount=Decimal(row[2]),
         received_on=date.fromisoformat(row[3]),
         recorded_by=row[4],
+    )
+
+
+def _return_reason(row: tuple) -> ReturnReason:
+    document_ref, reason, recorded_by, recorded_at, note = row
+    return ReturnReason(
+        document_ref, Reason(reason), recorded_by, datetime.fromisoformat(recorded_at), note
     )
 
 

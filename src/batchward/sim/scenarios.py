@@ -277,3 +277,67 @@ def _split(rng: random.Random, total: int, parts: int, minimum: int) -> list[int
     for _ in range(total - minimum * parts):
         shares[rng.randrange(parts)] += 1
     return shares
+
+
+@dataclass(frozen=True, slots=True)
+class BreakageReturns:
+    """Chemists sending back stock they broke, on credit notes of their own."""
+
+    documents: tuple[str, ...]
+    """The credit notes, for a person to mark as breakage (ADR 0025)."""
+    units: int
+    batches: tuple[BatchKey, ...]
+
+
+def seed_breakage_returns(
+    business: Business,
+    *,
+    on: date,
+    returns: int = 3,
+    units_each: tuple[int, int] = (2, 6),
+    keep_months: int = 6,
+    seed: int = 7301,
+) -> BreakageReturns:
+    """A few chemists send broken strips back onto the breakage and expiry shelf.
+
+    Only batches with well over ``keep_months`` left are used, so nothing here
+    can be mistaken for a near-expiry return: what comes back is breakage, and
+    the demo records it as such.
+    """
+    rng = random.Random(seed)
+    far = on + timedelta(days=keep_months * 31)
+    supplied: dict[tuple[str, BatchKey], int] = {}
+    for movement in business.ledger:
+        if movement.kind is MovementType.SALE and movement.party_id and movement.batch.expiry > far:
+            supplied[(movement.party_id, movement.batch)] = (
+                supplied.get((movement.party_id, movement.batch), 0) - movement.qty
+            )
+    enough = sorted(
+        (pair for pair, units in supplied.items() if units >= units_each[1]),
+        key=lambda pair: (pair[0], pair[1]),
+    )
+    if len(enough) < returns:
+        raise ValueError("the business has too few recent sales of long-dated batches to break")
+    chosen = rng.sample(enough, returns)
+    items = {item.id: item for item in business.catalogue.items}
+    documents, batches, total = [], [], 0
+    for number, (party_id, key) in enumerate(chosen, start=1):
+        units = rng.randint(*units_each)
+        document = f"CN-BRK-{on:%y%m%d}-{number:02d}"
+        business.ledger.append(
+            StockMovement(
+                id=f"BRK-{on:%y%m%d}-{number:04d}",
+                at=ist_datetime(on, time(11, 30)),
+                kind=MovementType.SALE_RETURN,
+                batch=key,
+                location_id=RETURNS.id,
+                qty=units,
+                document_ref=document,
+                party_id=party_id,
+                rate=price_to_retailer(business.batches[key].mrp, items[key.item_id].gst_rate),
+            )
+        )
+        documents.append(document)
+        batches.append(key)
+        total += units
+    return BreakageReturns(tuple(documents), total, tuple(batches))

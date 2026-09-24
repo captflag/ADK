@@ -7,7 +7,7 @@ import re
 import sqlite3
 import sys
 from contextlib import closing
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 from pathlib import Path
 
 from batchward.analysis.demand import daily_sales
@@ -20,7 +20,9 @@ from batchward.bridge.marg_export import export_to_marg
 from batchward.bridge.marg_layout import format_expiry
 from batchward.brief_cli import add_brief_commands
 from batchward.buying.cases import CaseSize
+from batchward.claims.breakage import Reason, ReturnReason
 from batchward.claims_cli import add_claims_commands
+from batchward.core.clock import ist_datetime
 from batchward.cover_cli import add_cover_commands
 from batchward.intake_cli import add_intake_commands
 from batchward.orders_cli import add_orders_commands
@@ -36,7 +38,7 @@ from batchward.sim.invoices import count_sheet, purchase_invoices, render_text
 from batchward.sim.price_scenario import RISE_RECEIVED, RISE_SELLING_DAYS, seed_price_control
 from batchward.sim.recall_drill import run_recall_drill
 from batchward.sim.return_terms import return_terms
-from batchward.sim.scenarios import recall_notice, seed_recall
+from batchward.sim.scenarios import recall_notice, seed_breakage_returns, seed_recall
 from batchward.whatsapp_cli import add_whatsapp_commands
 
 _RECALL_RECEIVED = date(2026, 1, 5)
@@ -160,6 +162,10 @@ def _demo_marg(args: argparse.Namespace) -> int:
         prices, price_note = seed_price_control(business), ""
     except (LookupError, ValueError) as error:
         prices, price_note = None, str(error)
+    try:
+        broken = seed_breakage_returns(business, on=end)
+    except ValueError:
+        broken = None
 
     partial = output.with_name(output.name + ".partial")
     try:
@@ -195,6 +201,13 @@ def _demo_marg(args: argparse.Namespace) -> int:
         print(
             f"  Seeded Class {recall.recall_class} recall: batch {recall.batch.batch_no}, "
             f"supplied to {len(recall.chemists)} chemists, {recall.units_on_hand} strips on hand"
+        )
+    if broken is None:
+        print("  No breakage seeded: no long-dated batch had enough sold to a chemist.")
+    else:
+        print(
+            f"  Seeded breakage: {broken.units} strips back from chemists on "
+            f"{len(broken.documents)} credit notes, to claim from their companies"
         )
     if prices is None:
         print(f"  No price problems seeded: {price_note}; another --seed may hold them.")
@@ -263,6 +276,21 @@ def _demo_marg(args: argparse.Namespace) -> int:
                     for item_id, units in sorted(business.case_sizes.items())
                 )
             print(f"  Recorded case sizes for {saved} products")
+            if broken is not None:
+                with store.transaction():
+                    saved = sum(
+                        store.save_return_reason(
+                            ReturnReason(
+                                document,
+                                Reason.BREAKAGE,
+                                "system",
+                                ist_datetime(end, time(12, 0)),
+                                "Simulated chemist breakage",
+                            )
+                        )
+                        for document in broken.documents
+                    )
+                print(f"  Marked {saved} credit notes as breakage")
     return 0
 
 

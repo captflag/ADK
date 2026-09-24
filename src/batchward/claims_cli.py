@@ -1,9 +1,11 @@
-"""``batchward claims``: return terms, claim windows, and expiry claims (ADR 0018).
+"""``batchward claims``: return terms, claim windows, and claims made (ADR 0018, 0025).
 
 ``claims terms import`` records each company's return terms. ``claims windows``
 shows what can be claimed now, which windows close soon, and what was written
 off while it could still have been claimed. ``claims draft`` drafts a claim on
 one company and puts it up for approval (ADR 0005); only an approval makes it.
+``claims returns mark`` records why stock came back on a credit note, and
+``claims breakage`` lists and claims what chemists sent back broken.
 ``claims list`` shows claims made by company and age, and ``claims settle``
 records a company's credit note against one.
 """
@@ -14,21 +16,24 @@ import argparse
 import sqlite3
 import sys
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from batchward.agents import breakage as breakage_flow
 from batchward.agents import claiming
-from batchward.agents.data import DataUnavailableError
+from batchward.agents.data import DataUnavailableError, load_marg
 from batchward.analysis.costs import batch_costs
 from batchward.approvals_cli import request_approval
 from batchward.bridge.marg_contract import MargLayoutError
 from batchward.bridge.marg_layout import format_expiry
+from batchward.claims.breakage import Reason, ReturnReason, normalise
 from batchward.claims.claim import Settlement, settled
-from batchward.claims.submission import draft_for
+from batchward.claims.submission import draft_breakage_for, draft_for
 from batchward.claims.terms import TermsFileError, read_terms
 from batchward.claims.windows import CLOSING_DAYS, WindowState, lost_claims
-from batchward.core.clock import end_of_day
+from batchward.core.clock import IST, end_of_day
+from batchward.core.models import MovementType
 from batchward.records.store import RecordsError, RecordStore
 from batchward.reporting.inr import format_inr
 from batchward.whatsapp_cli import notifier
@@ -81,6 +86,50 @@ def add_claims_commands(commands: argparse._SubParsersAction) -> None:
         "--approvers", type=Path, help="CSV of phone,name to notify (default BATCHWARD_APPROVERS)"
     )
     draft.set_defaults(handler=_draft)
+
+    returns = actions.add_parser("returns", help="why stock came back from a chemist")
+    return_actions = returns.add_subparsers(dest="returns_command", required=True)
+    mark = return_actions.add_parser("mark", help="record why one credit note's stock came back")
+    mark.add_argument("document", help="the credit note the return came back on")
+    mark.add_argument(
+        "--reason",
+        type=Reason,
+        choices=list(Reason),
+        required=True,
+        help="breakage, expiry, or other",
+    )
+    mark.add_argument("--by", required=True, help="who is recording it")
+    mark.add_argument("--note", default="", help="anything worth keeping with it")
+    _records(mark)
+    mark.set_defaults(handler=_mark_return)
+    marked = return_actions.add_parser("list", help="returns recorded, and with --marg those not")
+    _records(marked)
+    marked.add_argument("--marg", type=Path, help="Marg database, to list returns not yet marked")
+    marked.add_argument("--limit", type=int, default=20, help="returns to list (default 20)")
+    marked.set_defaults(handler=_list_returns)
+
+    broken = actions.add_parser(
+        "breakage", help="what chemists sent back broken, and claims for it"
+    )
+    broken_actions = broken.add_subparsers(dest="breakage_command", required=True)
+    shown = broken_actions.add_parser("list", help="breakage in stock, by company")
+    _stock(shown)
+    shown.add_argument("--limit", type=int, default=20, help="batches to list (default 20)")
+    shown.set_defaults(handler=_list_breakage)
+    draft_breakage = broken_actions.add_parser(
+        "draft", help="draft a breakage claim on one company and ask for approval"
+    )
+    draft_breakage.add_argument("company", help="the company's code in Marg, e.g. C06")
+    _stock(draft_breakage)
+    draft_breakage.add_argument(
+        "--out", type=Path, required=True, help="folder for the claim's files"
+    )
+    draft_breakage.add_argument("--approve-by", help="approve it at once, as this person")
+    draft_breakage.add_argument(
+        "--notify", action="store_true", help="send the request to the approvers on WhatsApp"
+    )
+    draft_breakage.add_argument("--approvers", type=Path, help="CSV of phone,name to notify")
+    draft_breakage.set_defaults(handler=_draft_breakage)
 
     made = actions.add_parser("list", help="claims made, by company and age")
     _records(made)
@@ -243,6 +292,158 @@ def _draft(args: argparse.Namespace) -> int:
         planned,
         records=args.records,
         start=lambda: claiming.ask_to_claim(
+            args.marg, args.records, args.company, planned, out=args.out
+        ),
+        approve_by=args.approve_by,
+        notify=notifier(args),
+    )
+
+
+def _mark_return(args: argparse.Namespace) -> int:
+    try:
+        reason = ReturnReason(
+            document_ref=args.document,
+            reason=args.reason,
+            recorded_by=args.by,
+            at=datetime.now(IST),
+            note=args.note,
+        )
+        with RecordStore(args.records) as store:
+            recorded = store.save_return_reason(reason)
+    except _FAILURES as error:
+        return _fail(error)
+    document = normalise(args.document)
+    if not recorded:
+        print(f"{document} is already recorded as {args.reason}.")
+        return 0
+    print(f"Recorded {document} as {args.reason}, by {args.by}.")
+    if args.reason is Reason.BREAKAGE:
+        print("Its units can be claimed with `claims breakage draft <company>`.")
+    return 0
+
+
+def _list_returns(args: argparse.Namespace) -> int:
+    try:
+        with RecordStore(args.records, create=False) as store:
+            reasons = store.return_reasons()
+        unmarked = [] if args.marg is None else _unmarked(args.marg, reasons, args.limit)
+    except _FAILURES as error:
+        return _fail(error)
+    if reasons:
+        print(f"  {'Credit note':<18}{'Reason':<10}{'Recorded':<18}By")
+        for reason in reasons:
+            print(
+                f"  {reason.document_ref:<18}{reason.reason!s:<10}"
+                f"{reason.at.astimezone(IST):%d/%m/%Y %H:%M}  {reason.recorded_by}"
+            )
+    else:
+        print("No returns are marked. Record one with `claims returns mark`.")
+    if args.marg is not None:
+        if not unmarked:
+            print("\nEvery return in Marg is marked.")
+            return 0
+        print(f"\nReturns in Marg with no reason recorded, latest first (of {len(unmarked)}):")
+        for document, day, units in unmarked[: max(1, args.limit)]:
+            print(f"  {document:<18}{day:%d/%m/%Y}{units:>8} units")
+    return 0
+
+
+def _unmarked(marg: Path, reasons, limit: int) -> list[tuple[str, date, int]]:
+    """Sale returns in Marg with no reason recorded, latest first."""
+    stock = load_marg(marg)
+    marked = {normalise(reason.document_ref) for reason in reasons}
+    returns: dict[str, tuple[date, int]] = {}
+    for movement in stock.ledger:
+        if movement.kind is not MovementType.SALE_RETURN or movement.qty <= 0:
+            continue
+        if stock.ledger.is_reversed(movement.id):
+            continue
+        document = normalise(movement.document_ref)
+        if document in marked:
+            continue
+        day, units = returns.get(document, (movement.at.date(), 0))
+        returns[document] = (day, units + movement.qty)
+    ordered = sorted(returns.items(), key=lambda entry: (entry[1][0], entry[0]), reverse=True)
+    return [(document, day, units) for document, (day, units) in ordered]
+
+
+def _list_breakage(args: argparse.Namespace) -> int:
+    try:
+        drafted = draft_breakage_for(args.marg, args.records)
+    except _FAILURES as error:
+        return _fail(error)
+    stock, breakage = drafted.stock, drafted.breakage
+    if not breakage.to_claim and not breakage.on_sale_shelves:
+        print(
+            "No breakage is in stock. Mark a chemist's credit note with "
+            "`claims returns mark <credit note> --reason breakage`."
+        )
+        return 0
+    costs = batch_costs(stock.ledger, as_of=end_of_day(stock.today))
+    by_company: defaultdict[str, list] = defaultdict(list)
+    for (key, location_id), units in sorted(breakage.to_claim.items()):
+        by_company[key.company_id].append((key, location_id, units))
+    total = sum(
+        (costs.get(key, Decimal(0)) * units for key, _, units in
+         (row for rows in by_company.values() for row in rows)),
+        Decimal(0),
+    )  # fmt: skip
+    noun = "batch" if len(breakage.to_claim) == 1 else "batches"
+    print(
+        f"Breakage in stock on {stock.today:%d/%m/%Y}: {breakage.units} units of "
+        f"{len(breakage.to_claim)} {noun} from {len(by_company)} "
+        f"{'company' if len(by_company) == 1 else 'companies'}, {format_inr(total)} at cost."
+    )
+    rows = [row for company in sorted(by_company) for row in by_company[company]]
+    if rows:
+        print(f"\n  {'Company':<9}{'Product':<22}{'Batch':<10}{'Expiry':<9}{'Place':<11}"
+              f"{'Units':>7}{'At cost':>12}")  # fmt: skip
+        for key, location_id, units in rows[: max(1, args.limit)]:
+            brand = stock.items[key.item_id].brand if key.item_id in stock.items else key.item_id
+            print(
+                f"  {key.company_id:<9}{brand[:21]:<22}{key.batch_no:<10}"
+                f"{format_expiry(key.expiry):<9}{location_id:<11}{units:>7}"
+                f"{format_inr(costs.get(key, Decimal(0)) * units):>12}"
+            )
+    if breakage.on_sale_shelves:
+        print(
+            "\nMarked as breakage but still where stock is sold from; move it to the breakage "
+            "and expiry shelf in Marg:"
+        )
+        for (key, location_id), units in sorted(breakage.on_sale_shelves.items()):
+            print(f"  {key.batch_no:<10}{location_id:<11}{units:>7} units")
+    print("\nClaim it with `claims breakage draft <company>`; only an approval makes the claim.")
+    return 0
+
+
+def _draft_breakage(args: argparse.Namespace) -> int:
+    try:
+        drafted = draft_breakage_for(args.marg, args.records, company_id=args.company)
+    except _FAILURES as error:
+        return _fail(error)
+    company = drafted.stock.parties[args.company]
+    if drafted.claim is None or drafted.posting is None:
+        print(f"No breakage of {company.name}'s is in stock to claim.")
+        return 0
+    claim = drafted.claim
+    print(
+        f"Breakage claim {claim.number} on {company.name}: {claim.units} units of "
+        f"{claim.batches} {'batch' if claim.batches == 1 else 'batches'}, "
+        f"{format_inr(claim.taxable_value, paise=True)} + GST "
+        f"{format_inr(claim.tax_amount, paise=True)} = {format_inr(claim.total, paise=True)}."
+    )
+    for line in claim.lines:
+        brand = drafted.stock.items[line.batch.item_id].brand
+        print(
+            f"  {brand[:21]:<22}{line.batch.batch_no:<10}{format_expiry(line.batch.expiry):<9}"
+            f"{line.location_id:<11}{line.units:>6}"
+            f"{format_inr(line.taxable_value, paise=True):>14}"
+        )
+    planned = drafted.posting
+    return request_approval(
+        planned,
+        records=args.records,
+        start=lambda: breakage_flow.ask_to_claim_breakage(
             args.marg, args.records, args.company, planned, out=args.out
         ),
         approve_by=args.approve_by,

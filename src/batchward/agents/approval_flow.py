@@ -118,9 +118,11 @@ class Flow:
 
 def flows() -> dict[str, Flow]:
     """Every kind of action that waits for approval, by kind."""
-    from batchward.agents import claiming, ordering, receiving
+    from batchward.agents import breakage, claiming, ordering, receiving
 
-    return {flow.kind: flow for flow in (receiving.FLOW, claiming.FLOW, ordering.FLOW)}
+    return {
+        flow.kind: flow for flow in (receiving.FLOW, claiming.FLOW, ordering.FLOW, breakage.FLOW)
+    }
 
 
 async def _ask_approval(ctx: Context, kind: str, posting: dict, records: str):

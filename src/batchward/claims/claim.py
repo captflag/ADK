@@ -1,7 +1,9 @@
-"""An expiry claim on one company: what is sent back, from where, and the credit asked for.
+"""A claim on one company: what is sent back, from where, and the credit asked for.
 
-A claim is drafted from the batches whose windows are open (ADR 0018). Each line
-is units of one batch taken from one place, valued at the batch's cost times the
+An expiry claim is drafted from the batches whose windows are open (ADR 0018),
+and a breakage claim from what chemists sent back broken (ADR 0025); both are
+written the same way, and a breakage claim's number begins BR. Each line is
+units of one batch taken from one place, valued at the batch's cost times the
 share the company credits, with GST at the item's rate. Expired goods returned
 this way are credited under section 34 of the CGST Act, and the stockist reverses
 the input credit it took; stock bought before the rate cut of 22 September 2025
@@ -106,9 +108,9 @@ class Settlement:
             raise ValueError("a credit note must be for more than nothing")
 
 
-def claim_number(company_id: str, on: date) -> str:
+def claim_number(company_id: str, on: date, *, prefix: str = "CL") -> str:
     """One claim per company per day, so drafting it again the same day drafts the same claim."""
-    return f"CL/{company_id}/{on:%y%m%d}"
+    return f"{prefix}/{company_id}/{on:%y%m%d}"
 
 
 def draft_claim(
@@ -158,16 +160,19 @@ RETURN_COLUMNS = (
 )  # fmt: skip
 
 
-def claim_posting(claim: Claim, company: Party, items: Mapping[str, Item]) -> Posting:
+def claim_posting(
+    claim: Claim, company: Party, items: Mapping[str, Item], *, kind: str = KIND
+) -> Posting:
     """What approving a claim writes: the claim sheet, its letter, and Marg's return voucher.
 
-    Marg publishes no import layout, so the return voucher's columns are an
-    assumption, like the purchase voucher's (ADR 0016).
+    ``kind`` is what the claim is for, which its letter says. Marg publishes no
+    import layout, so the return voucher's columns are an assumption, like the
+    purchase voucher's (ADR 0016).
     """
     stem = claim.number.replace("/", "-")
     files = {
         f"{stem}.claim.csv": _sheet(claim, items),
-        f"{stem}.claim-letter.txt": _letter(claim, company),
+        f"{stem}.claim-letter.txt": _letter(claim, company, kind),
         f"{stem}.marg-purchase-return.csv": _return_voucher(claim, company, items),
     }
     summary = (
@@ -213,9 +218,10 @@ def _sheet(claim: Claim, items: Mapping[str, Item]) -> str:
     return out.getvalue()
 
 
-def _letter(claim: Claim, company: Party) -> str:
+def _letter(claim: Claim, company: Party, kind: str = KIND) -> str:
+    breakage = kind != KIND
     lines = [
-        "EXPIRY CLAIM",
+        "BREAKAGE CLAIM" if breakage else "EXPIRY CLAIM",
         "Draft for the stockist to sign and send. Nothing has been sent.",
         "",
         f"{'To':12}{company.name}",
@@ -224,8 +230,13 @@ def _letter(claim: Claim, company: Party) -> str:
         f"{'Date':12}{claim.made_on:%d/%m/%Y}",
         "",
         f"We return {claim.units} units of {claim.batches} "
-        f"{'batch' if claim.batches == 1 else 'batches'} for expiry under your return terms, "
-        "as listed in the claim sheet.",
+        f"{'batch' if claim.batches == 1 else 'batches'} "
+        + (
+            "that chemists sent back broken or damaged,\nunder your breakage terms, "
+            if breakage
+            else "for expiry under your return terms, "
+        )
+        + "as listed in the claim sheet.",
         f"{'Taxable value':24}{format_inr(claim.taxable_value, paise=True):>16}",
         f"{'GST':24}{format_inr(claim.tax_amount, paise=True):>16}",
         f"{'Credit asked for':24}{format_inr(claim.total, paise=True):>16}",

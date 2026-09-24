@@ -26,8 +26,10 @@ from batchward.analysis.routing import daily_rates, forecast_weekly
 from batchward.bridge.marg_layout import format_expiry
 from batchward.buying.order import OPEN_DAYS, OpenOrder, still_due
 from batchward.buying.suggest import LEAD_DAYS, suggest
+from batchward.claims.breakage import Breakage, breakage_in_stock
 from batchward.claims.claim import settled
 from batchward.claims.submission import windows_for
+from batchward.claims.terms import TermsTable
 from batchward.claims.windows import CLOSING_DAYS, WindowState, lost_claims
 from batchward.compliance.prices import (
     Cause,
@@ -576,8 +578,9 @@ def claims_summary(limit: int = 10) -> dict:
     days while it could still have been claimed, and claims already made that the company has
     not yet fully credited, with their age. Claim values are at cost times the share each
     company credits, before GST. Use this for any question about claims, expiry returns or
-    money stuck with companies, and for the morning brief. `limit` is how many batches and
-    claims to list (at most 50)."""
+    money stuck with companies, and for the morning brief. Also breakage chemists sent back,
+    which is claimable now whatever its expiry. `limit` is how many batches and claims to list
+    (at most 50)."""
     data = current()
     path = records_path()
     if path is None or not path.is_file():
@@ -587,11 +590,13 @@ def claims_summary(limit: int = 10) -> dict:
             terms = store.terms_table()
             claims = store.claims()
             settlements = store.settlements()
+            reasons = store.return_reasons()
     except (RecordsError, sqlite3.Error, ValueError) as error:
         return {"error": f"the claims on record cannot be read: {error}"}
     if not len(terms):
         return {"error": "no return terms are on record; import them with `claims terms import`"}
-    windows = windows_for(data, terms, claims)
+    breakage = breakage_in_stock(data.ledger, reasons, data.locations, on=data.today)
+    windows = windows_for(data, terms, claims, breakage)
     claimable = [w for w in windows if w.state in (WindowState.OPEN, WindowState.CLOSING)]
     closing = [w for w in claimable if w.state is WindowState.CLOSING]
     lost = lost_claims(
@@ -627,6 +632,7 @@ def claims_summary(limit: int = 10) -> dict:
         "companies_without_terms": sorted(
             {w.company_id for w in windows if w.state is WindowState.NO_TERMS}
         ),
+        "breakage_to_claim": _breakage(data, breakage, terms),
         "batches": [
             {
                 "company": _party_name(data, w.company_id),
@@ -781,6 +787,31 @@ def morning_brief() -> dict:
         ],
         "not_checked": list(brief.not_checked),
         "note": "Requests are answered with approve or reject and the request number.",
+    }
+
+
+def _breakage(data: StockData, breakage: Breakage, terms: TermsTable) -> dict:
+    """Breakage chemists sent back that is in stock, at cost and at what companies credit."""
+    costs = batch_costs(data.ledger)
+    at_cost = credit = Decimal(0)
+    for (key, _location), units in breakage.to_claim.items():
+        cost = costs.get(key)
+        if cost is None:
+            continue
+        at_cost += cost * units
+        company = terms.in_force(key.company_id, data.today)
+        if company is not None:
+            credit += cost * units * company.credit_percent / 100
+    return {
+        "batches": len(breakage.batches()),
+        "units": breakage.units,
+        "value_at_cost": _paise(at_cost),
+        "credit": _paise(credit),
+        "on_sale_shelves": sum(breakage.on_sale_shelves.values()),
+        "rule": (
+            "units returned on credit notes a person marked as breakage, still in stock; "
+            "claimed with `claims breakage draft`"
+        ),
     }
 
 

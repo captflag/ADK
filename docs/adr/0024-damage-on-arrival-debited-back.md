@@ -72,3 +72,9 @@ without saying which it was.
 - **Guessing chemist breakage from how far a returned batch is from expiry.**
   It would claim near-expiry returns as breakage, before a company would accept
   them as either.
+
+## Amendment, 2026-09-24: breakage chemists send back
+
+The reason a return came back is now recorded against the credit note, and
+breakage marked that way is claimed from its company (ADR 0025). Godown handling
+breakage is still the stockist's own loss.

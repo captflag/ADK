@@ -1,10 +1,12 @@
 """Drafting a claim from Marg and the records, and recording it once approved (ADR 0018).
 
-A claim is drafted from the day's stock, forecast and return terms, less what
-earlier claims already took but Marg has not yet shown leaving. It is put up for
-approval like a delivery (ADR 0005); on approval it is drafted again and made
-only if it is still exactly what the person saw, with the approval, the claim
-and its files recorded together.
+An expiry claim is drafted from the day's stock, forecast and return terms, and
+a breakage claim from what chemists sent back on credit notes marked as breakage
+(ADR 0025); both less what earlier claims already took but Marg has not yet
+shown leaving. Units marked as breakage are left out of the expiry windows, so
+nothing is claimed twice. A claim is put up for approval like a delivery
+(ADR 0005); on approval it is drafted again and made only if it is still exactly
+what the person saw, with the approval, the claim and its files recorded together.
 """
 
 from __future__ import annotations
@@ -18,6 +20,14 @@ from pathlib import Path
 from batchward.agents.data import StockData, load_marg
 from batchward.analysis.costs import batch_costs
 from batchward.analysis.routing import daily_rates
+from batchward.claims.breakage import (
+    KIND as BREAKAGE_KIND,
+)
+from batchward.claims.breakage import (
+    Breakage,
+    breakage_in_stock,
+    draft_breakage,
+)
 from batchward.claims.claim import KIND, Claim, claim_posting, draft_claim
 from batchward.claims.terms import TermsTable
 from batchward.claims.windows import ClaimWindow, claim_windows
@@ -31,6 +41,14 @@ from batchward.records.store import RecordsError, RecordStore
 class Drafted:
     stock: StockData
     windows: list[ClaimWindow]
+    claim: Claim | None
+    posting: Posting | None
+
+
+@dataclass(frozen=True, slots=True)
+class DraftedBreakage:
+    stock: StockData
+    breakage: Breakage
     claim: Claim | None
     posting: Posting | None
 
@@ -68,8 +86,16 @@ def first_bought(ledger: Ledger) -> dict[BatchKey, date]:
     return first
 
 
-def windows_for(stock: StockData, terms: TermsTable, claims: Iterable[Claim]) -> list[ClaimWindow]:
-    """Claim windows for the stock held today, less what earlier claims already took."""
+def windows_for(
+    stock: StockData,
+    terms: TermsTable,
+    claims: Iterable[Claim],
+    breakage: Breakage | None = None,
+) -> list[ClaimWindow]:
+    """Claim windows for the stock held today, less what claims and breakage already took."""
+    taken = still_in_stock(claims, stock.ledger)
+    for where, units in (breakage.to_claim if breakage else {}).items():
+        taken[where] = taken.get(where, 0) + units
     return claim_windows(
         stock.ledger,
         batch_costs(stock.ledger),
@@ -77,17 +103,24 @@ def windows_for(stock: StockData, terms: TermsTable, claims: Iterable[Claim]) ->
         daily_rates(stock.ledger, on=stock.today),
         terms,
         on=stock.today,
-        claimed=still_in_stock(claims, stock.ledger),
+        claimed=taken,
     )
+
+
+def recorded(store: RecordStore, stock: StockData) -> tuple[TermsTable, list[Claim], Breakage]:
+    """What the records say today: return terms, claims made, and breakage still in stock."""
+    terms = store.terms_table()
+    claims = store.claims()
+    reasons = store.return_reasons()
+    return terms, claims, breakage_in_stock(stock.ledger, reasons, stock.locations, on=stock.today)
 
 
 def draft_for(marg: Path, records: Path, *, company_id: str | None = None) -> Drafted:
     """Claim windows for the stock in Marg today, and a claim on ``company_id`` if given."""
     stock = load_marg(marg)
     with RecordStore(records, create=False) as store:
-        terms = store.terms_table()
-        claims = store.claims()
-    windows = windows_for(stock, terms, claims)
+        terms, claims, breakage = recorded(store, stock)
+    windows = windows_for(stock, terms, claims, breakage)
     claim = posting = None
     if company_id is not None:
         company = stock.parties.get(company_id)
@@ -105,6 +138,33 @@ def draft_for(marg: Path, records: Path, *, company_id: str | None = None) -> Dr
     return Drafted(stock, windows, claim, posting)
 
 
+def draft_breakage_for(
+    marg: Path, records: Path, *, company_id: str | None = None
+) -> DraftedBreakage:
+    """Breakage in stock today, and a breakage claim on ``company_id`` if given."""
+    stock = load_marg(marg)
+    with RecordStore(records, create=False) as store:
+        terms, claims, breakage = recorded(store, stock)
+    claim = posting = None
+    if company_id is not None:
+        company = stock.parties.get(company_id)
+        if company is None:
+            raise ValueError(f"no company {company_id} in Marg")
+        claim = draft_breakage(
+            breakage,
+            batch_costs(stock.ledger),
+            terms,
+            stock.items,
+            company_id=company_id,
+            on=stock.today,
+            claimed=still_in_stock(claims, stock.ledger),
+            bought_on=first_bought(stock.ledger),
+        )
+        if claim is not None:
+            posting = claim_posting(claim, company, stock.items, kind=BREAKAGE_KIND)
+    return DraftedBreakage(stock, breakage, claim, posting)
+
+
 def submit(
     store: RecordStore,
     claim: Claim,
@@ -114,6 +174,7 @@ def submit(
     approved_by: str,
     at: datetime,
     out: Path,
+    kind: str = KIND,
 ) -> Posted:
     """Record the approved claim and write its files, all or nothing.
 
@@ -124,7 +185,7 @@ def submit(
         raise RecordsError(
             f"claim {claim.number} has changed since it was put up for approval; draft it again"
         )
-    approval = Approval(planned.approval_id, KIND, approved_by, at, planned.digest, planned.summary)
+    approval = Approval(planned.approval_id, kind, approved_by, at, planned.digest, planned.summary)
     with store.atomically():
         if not store.save_approval(approval):
             earlier = store.approval(approval.id)
