@@ -7,13 +7,16 @@ it is posted, it is matched against two other records (ADR 0016):
   than was ordered, is a person's call to accept. An order may come on several
   bills, so what earlier approved bills received against it counts too (ADR 0017).
 - **the count**: what the godown in-charge counted off the boxes, batch by batch,
-  with the expiry and manufacture month read from the packs. Units billed but
-  not received go on a debit note to the company. Units received beyond what
-  was billed and given free are not posted until someone decides.
+  with the expiry and manufacture month read from the packs, and how many of
+  the units counted arrived damaged. Units billed but not received, and billed
+  units that arrived damaged, go on a debit note to the company (ADR 0024).
+  Units received beyond what was billed and given free are not posted until
+  someone decides.
 
-What is posted is what arrived: received units up to those billed, then free
-units. A batch new to the business also needs its manufacture month, which the
-count sheet carries from the pack.
+What is posted is what arrived fit to sell: received units up to those billed,
+then free units. Damaged units are never posted; they are kept aside for the
+company. A batch new to the business also needs its manufacture month, which
+the count sheet carries from the pack.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from enum import StrEnum
 
 from batchward.core.models import Batch, BatchKey
 from batchward.core.orders import PurchaseOrder
@@ -46,6 +50,10 @@ _COUNT_COLUMNS = {
     "counted": "units",
     "units": "units",
     "product": "product",
+    "damaged": "damaged",
+    "unitsdamaged": "damaged",
+    "broken": "damaged",
+    "breakage": "damaged",
 }
 
 
@@ -63,6 +71,8 @@ class CountedBatch:
     manufactured: str = ""
     """As read off the pack; needed for a batch new to the business."""
     product: str = ""
+    damaged: int = 0
+    """Of the units counted, those that arrived broken, crushed or leaking."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +87,13 @@ class ReceivedLine:
     """Billed units that did not arrive: the debit note."""
     manufactured: date | None
     """For a batch new to the business, the manufacture month from the pack."""
+    damaged: int = 0
+    """Billed units that arrived damaged: not posted, and on the debit note."""
+
+
+class DebitReason(StrEnum):
+    NOT_RECEIVED = "not received"
+    DAMAGED = "received damaged"
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +102,7 @@ class DebitNoteLine:
     units: int
     taxable_value: Decimal
     tax_amount: Decimal
+    reason: DebitReason = DebitReason.NOT_RECEIVED
 
     @property
     def total(self) -> Decimal:
@@ -167,14 +185,27 @@ def read_count_sheet(lines: Iterable[str]) -> list[CountedBatch]:
             raise CountSheetError(f"line {number} has no batch number")
         if not re.fullmatch(r"\d+", values["units"].replace(",", "")):
             raise CountSheetError(f"line {number} counts {values['units']!r}, not whole units")
+        units = int(values["units"].replace(",", ""))
+        damaged_text = values.get("damaged", "").replace(",", "") or "0"
+        if not re.fullmatch(r"\d+", damaged_text):
+            raise CountSheetError(
+                f"line {number} has {values['damaged']!r} damaged, not whole units"
+            )
+        damaged = int(damaged_text)
+        if damaged > units:
+            raise CountSheetError(
+                f"line {number} has {damaged} units damaged of only {units} counted; count "
+                "every unit that arrived, and say how many of them are damaged"
+            )
         counted.append(
             CountedBatch(
                 line=number,
                 batch_no=values["batch_no"],
-                units=int(values["units"].replace(",", "")),
+                units=units,
                 expiry=values.get("expiry", ""),
                 manufactured=values.get("manufactured", ""),
                 product=values.get("product", ""),
+                damaged=damaged,
             )
         )
     return counted
@@ -215,11 +246,14 @@ def match_receipt(
             )
             continue
         units = sum(count.units for count in counts)
+        broken = sum(count.damaged for count in counts)
+        fit = units - broken
         _check_packs(line, counts, batches, found)
         manufactured = _manufactured(line, counts, batches, found)
-        paid = min(units, line.quantity)
-        free = min(units - paid, line.free_quantity)
-        short = line.quantity - paid
+        paid = min(fit, line.quantity)
+        free = min(fit - paid, line.free_quantity)
+        damaged = min(broken, line.quantity - paid)
+        short = line.quantity - paid - damaged
         if units > line.quantity + line.free_quantity:
             found(
                 Severity.ASK,
@@ -229,7 +263,7 @@ def match_receipt(
                 f"{line.quantity} billed and {line.free_quantity} free: return or have "
                 "the extra billed",
             )
-        elif paid == line.quantity and free < line.free_quantity:
+        elif paid + damaged == line.quantity and free < line.free_quantity:
             found(
                 Severity.NOTE,
                 line.number,
@@ -237,12 +271,15 @@ def match_receipt(
                 f"{line.free_quantity - free} free units of batch {line.batch.batch_no} did "
                 "not arrive; take it up with the company's representative",
             )
+        invoice_line = check.invoice.lines[line.number - 1]
+        discount = amount(invoice_line.discount_percent or "0") or Decimal(0)
+        gst = amount(invoice_line.gst_percent) or Decimal(0)
+        for count, reason in ((short, DebitReason.NOT_RECEIVED), (damaged, DebitReason.DAMAGED)):
+            if count:
+                taxable = (count * line.rate * (1 - discount / 100)).quantize(PAISA)
+                tax = (taxable * gst / 100).quantize(PAISA)
+                debit.append(DebitNoteLine(line, count, taxable, tax, reason))
         if short:
-            invoice_line = check.invoice.lines[line.number - 1]
-            discount = amount(invoice_line.discount_percent or "0") or Decimal(0)
-            taxable = (short * line.rate * (1 - discount / 100)).quantize(PAISA)
-            gst = amount(invoice_line.gst_percent) or Decimal(0)
-            debit.append(DebitNoteLine(line, short, taxable, (taxable * gst / 100).quantize(PAISA)))
             found(
                 Severity.NOTE,
                 line.number,
@@ -250,7 +287,23 @@ def match_receipt(
                 f"{short} billed units of batch {line.batch.batch_no} did not arrive; "
                 "they go on the debit note",
             )
-        received.append(ReceivedLine(line, units, paid, free, short, manufactured))
+        if damaged:
+            found(
+                Severity.NOTE,
+                line.number,
+                "count",
+                f"{damaged} billed units of batch {line.batch.batch_no} arrived damaged; they "
+                "are not posted, go on the debit note, and stay due on the order",
+            )
+        if broken > damaged:
+            found(
+                Severity.NOTE,
+                line.number,
+                "count",
+                f"{broken - damaged} damaged units of batch {line.batch.batch_no} are beyond "
+                "what was billed; take them up with the company's representative",
+            )
+        received.append(ReceivedLine(line, units, paid, free, short, manufactured, damaged))
 
     for counts in by_batch.values():
         for count in counts:

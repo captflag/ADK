@@ -63,3 +63,9 @@ approved (ADR 0006). Approvals are meant to be recorded in an approval table
 - **Writing Marg's tables directly.** Forbidden by ADR 0006.
 - **Recording approval after the files are written.** A crash between the two
   would leave a posting nobody is recorded as approving.
+
+## Amendment, 2026-09-22: damage on arrival
+
+The count can say how many of a batch's units arrived damaged. They are not
+posted, go on the debit note beside the units not received, and stay due on the
+order (ADR 0024).

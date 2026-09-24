@@ -12,7 +12,12 @@ from batchward.core.orders import OrderLine
 from batchward.core.printed import printed_date
 from batchward.intake.checks import Severity, check_invoice
 from batchward.intake.posting import KIND, post, posting
-from batchward.intake.receipt import CountSheetError, match_receipt, read_count_sheet
+from batchward.intake.receipt import (
+    CountSheetError,
+    DebitReason,
+    match_receipt,
+    read_count_sheet,
+)
 from batchward.intake.voucher import VOUCHER_COLUMNS, approval_id, debit_note, purchase_voucher
 from batchward.records.store import RecordsError, RecordStore
 from batchward.sim.business import SimConfig, simulate
@@ -81,6 +86,56 @@ def test_units_billed_but_not_received_go_on_the_debit_note(business, invoice):
     assert short.tax_amount == (short.taxable_value * Decimal("0.05")).quantize(Decimal("0.01"))
     assert receipt.lines[0].paid == billed - 7
     assert (1, "count") in problems(receipt, Severity.NOTE)
+
+
+def test_units_that_arrived_damaged_are_not_posted_and_go_on_the_debit_note(business, invoice):
+    billed = int(invoice.lines[0].quantity)
+    count = recount(business, invoice, 0, **{"Units Counted": str(billed), "Damaged": "4"})
+    receipt = receive(business, invoice, count=count, earlier={})
+    assert receipt.ready, receipt.findings
+    (broken,) = receipt.debit_note
+    rate = Decimal(invoice.lines[0].rate)
+    assert (broken.reason, broken.units) == (DebitReason.DAMAGED, 4)
+    assert broken.taxable_value == (4 * rate).quantize(Decimal("0.01"))
+    first = receipt.lines[0]
+    assert (first.counted, first.paid, first.damaged, first.short) == (billed, billed - 4, 4, 0)
+    whole = receive(business, invoice, earlier={})
+    item_id = first.invoice_line.item.id
+    assert receipt.still_due()[item_id] == whole.still_due()[item_id] + 4
+    rows = list(csv.DictReader(io.StringIO(purchase_voucher(receipt))))
+    assert rows[0]["QTY"] == str(billed - 4)
+    (message,) = [f.message for f in receipt.findings if f.line == 1]
+    assert message.startswith("4 billed units of batch") and "arrived damaged" in message
+
+
+def test_short_and_damaged_units_of_one_batch_are_listed_apart_on_the_debit_note(business, invoice):
+    billed = int(invoice.lines[0].quantity)
+    count = recount(business, invoice, 0, **{"Units Counted": str(billed - 3), "Damaged": "2"})
+    receipt = receive(business, invoice, count=count)
+    assert [(line.reason, line.units) for line in receipt.debit_note] == [
+        (DebitReason.NOT_RECEIVED, 3),
+        (DebitReason.DAMAGED, 2),
+    ]
+    assert receipt.lines[0].paid == billed - 5
+    note = debit_note(receipt, received=date(2026, 1, 31))
+    assert "Billed but not received when the delivery was counted on 31/01/2026:" in note
+    assert "Billed and received damaged when the delivery was counted on 31/01/2026" in note
+    total = note.index("\n  Total ")
+    assert note.index("not received") < note.index("received damaged") < total
+
+
+def test_damaged_units_beyond_those_billed_are_left_to_the_representative(business, invoice):
+    lines = [invoice.lines[0].model_copy(update={"free_quantity": "10"}), *invoice.lines[1:]]
+    with_free = invoice.model_copy(update={"lines": lines})
+    billed = int(invoice.lines[0].quantity)
+    count = recount(business, with_free, 0, **{"Units Counted": str(billed + 10),
+                                               "Damaged": "12"})  # fmt: skip
+    receipt = receive(business, with_free, count=count)
+    first = receipt.lines[0]
+    assert (first.paid, first.free, first.damaged, first.short) == (billed - 2, 0, 2, 0)
+    notes = [f.message for f in receipt.findings if f.line == 1]
+    assert any("10 damaged units of batch" in note and "beyond what was billed" in note
+               for note in notes)  # fmt: skip
 
 
 def test_a_discount_on_the_bill_is_taken_off_the_debit_note(business, invoice):
@@ -169,6 +224,8 @@ def test_the_order_is_matched_by_product_and_quantity(business, invoice):
         (["Product,Expiry"], "no column 'Batch No.'"),
         (["Batch No.,Units Counted", "AZ4021,ten"], "line 2 counts 'ten'"),
         (["Batch No.,Units Counted", ",5"], "line 2 has no batch number"),
+        (["Batch No.,Units Counted,Damaged", "AZ4021,5,two"], "line 2 has 'two' damaged"),
+        (["Batch No.,Units Counted,Damaged", "AZ4021,5,6"], "6 units damaged of only 5 counted"),
     ],
 )
 def test_a_count_sheet_that_cannot_be_read_is_refused(lines, message):

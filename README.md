@@ -84,6 +84,9 @@ business data. What exists so far:
   approves is a purchase voucher written for Marg to import, with the approval
   recorded so a bill is never posted twice
   ([ADR 0016](docs/adr/0016-receipts-matched-three-ways-and-posted-on-approval.md)).
+  Units counted as arrived damaged are never posted: they go on the same debit
+  note and stay due on the order
+  ([ADR 0024](docs/adr/0024-damage-on-arrival-debited-back.md)).
   An order delivered on several bills is matched against what is still due on
   it, so it cannot be billed twice over
   ([ADR 0017](docs/adr/0017-orders-matched-across-bills.md)).
@@ -184,7 +187,8 @@ as the godown counted it, with the purchase orders they fill.
 sim-out/records.sqlite` checks a reading before posting, and `batchward intake
 extract <invoice.txt|.pdf|.jpg> ...` has the clerk read the document first, which
 needs a Gemini API key. `batchward intake receive <invoice.json> --count <count.csv> --order
-<order.json> ...` matches the delivery and shows what is still due on the order.
+<order.json> ...` matches the delivery and shows what is still due on the order;
+a count sheet may add a `Damaged` column for units that arrived broken.
 With `--out <folder>` a delivery ready to post is put up for approval as a
 numbered request, and its run pauses. `batchward approvals list --records
 sim-out/records.sqlite` shows what waits, `approvals show A-0001 ...` what

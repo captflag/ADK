@@ -221,16 +221,21 @@ def _print_receipt(receipt: Receipt, stock: StockData) -> None:
     print("Received against the count:")
     print(
         f"  {'Line':<6}{'Batch':<10}{'Billed':>8}{'Free':>6}{'Counted':>9}{'Post':>7}{'Short':>7}"
+        f"{'Damaged':>9}"
     )
     for line in receipt.lines:
         billed = line.invoice_line
         print(
             f"  {billed.number:<6}{billed.batch.batch_no:<10}{billed.quantity:>8}"
             f"{billed.free_quantity:>6}{line.counted:>9}{line.paid + line.free:>7}{line.short:>7}"
+            f"{line.damaged:>9}"
         )
     _print_findings(receipt.findings)
     if receipt.debit_note:
-        print(f"Debit note for units not received: {format_inr(receipt.debit_total, paise=True)}")
+        print(
+            "Debit note for units not received or received damaged: "
+            f"{format_inr(receipt.debit_total, paise=True)}"
+        )
     if receipt.order is not None:
         print(f"Matched against order {receipt.order.number}.")
         _print_order(receipt, stock)

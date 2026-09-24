@@ -6,8 +6,9 @@ that actually arrived, and only once a person has approved it (ADR 0016). Marg
 publishes no import layout, so the columns here are an assumption, like the
 table layout the bridge reads.
 
-Units billed that did not arrive go on a debit note to the company, drafted for
-the stockist to number, sign and send.
+Units billed that did not arrive, and units billed that arrived damaged, go on a
+debit note to the company (ADR 0024), drafted for the stockist to number, sign
+and send.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from decimal import Decimal
 from batchward.bridge.marg_layout import format_expiry
 from batchward.intake.checks import InvoiceCheck
 from batchward.intake.invoice import amount
-from batchward.intake.receipt import Receipt
+from batchward.intake.receipt import DebitReason, Receipt
 from batchward.reporting.inr import format_inr
 
 PAISA = Decimal("0.01")
@@ -97,7 +98,7 @@ def purchase_voucher(receipt: Receipt) -> str:
 
 
 def debit_note(receipt: Receipt, *, received: date) -> str | None:
-    """A draft debit note for billed units that did not arrive, or None if all arrived."""
+    """A draft debit note for billed units not received or received damaged, or None."""
     if not receipt.debit_note:
         return None
     invoice = receipt.check.invoice
@@ -112,19 +113,35 @@ def debit_note(receipt: Receipt, *, received: date) -> str | None:
         + (f", our order {invoice.order_no}" if invoice.order_no else ""),
         f"{'Number':12}[debit note number]",
         "",
-        f"Billed but not received when the delivery was counted on {received:%d/%m/%Y}:",
-        f"  {'Product':22}{'Batch':10}{'Units':>6}{'Rate':>10}{'Taxable':>14}{'GST':>12}"
-        f"{'Total':>14}",
     ]
-    for short in receipt.debit_note:
-        line = short.invoice_line
-        lines.append(
-            f"  {line.item.brand:22}{line.batch.batch_no:10}{short.units:>6}"
-            f"{format_inr(line.rate, paise=True):>10}"
-            f"{format_inr(short.taxable_value, paise=True):>14}"
-            f"{format_inr(short.tax_amount, paise=True):>12}"
-            f"{format_inr(short.total, paise=True):>14}"
-        )
+    headings = {
+        DebitReason.NOT_RECEIVED: (
+            f"Billed but not received when the delivery was counted on {received:%d/%m/%Y}:"
+        ),
+        DebitReason.DAMAGED: (
+            f"Billed and received damaged when the delivery was counted on {received:%d/%m/%Y}, "
+            "kept aside for the company to collect or have destroyed:"
+        ),
+    }
+    for reason, heading in headings.items():
+        entries = [entry for entry in receipt.debit_note if entry.reason is reason]
+        if not entries:
+            continue
+        lines += [
+            heading,
+            f"  {'Product':22}{'Batch':10}{'Units':>6}{'Rate':>10}{'Taxable':>14}{'GST':>12}"
+            f"{'Total':>14}",
+        ]
+        for entry in entries:
+            line = entry.invoice_line
+            lines.append(
+                f"  {line.item.brand:22}{line.batch.batch_no:10}{entry.units:>6}"
+                f"{format_inr(line.rate, paise=True):>10}"
+                f"{format_inr(entry.taxable_value, paise=True):>14}"
+                f"{format_inr(entry.tax_amount, paise=True):>12}"
+                f"{format_inr(entry.total, paise=True):>14}"
+            )
+        lines.append("")
     lines += [
         f"  {'Total':74}{format_inr(receipt.debit_total, paise=True):>14}",
         "",

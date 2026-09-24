@@ -71,3 +71,9 @@ stock bought before the rate cut of 22 September 2025 may be higher than today's
 - **Numbering claims in a sequence.** The claim's number is in its files, and the
   files are what a person approves, so it must be known when the claim is
   drafted, not assigned when it is approved.
+
+## Amendment, 2026-09-22: breakage
+
+Units that arrive damaged are now debited back on the bill when the delivery is
+counted (ADR 0024). Breakage found later, in the godown or returned by
+chemists, is still not claimed, for the reason given above.

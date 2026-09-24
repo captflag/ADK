@@ -1,3 +1,4 @@
+import csv
 import json
 import shutil
 import sqlite3
@@ -747,6 +748,32 @@ def test_intake_receive_asks_for_approval_and_posts_once_approved(deliveries, tm
             "Ravi",
             "approved",
         )
+
+
+def test_units_counted_damaged_are_debited_back_when_the_delivery_is_posted(
+    deliveries, tmp_path, capsys
+):
+    receive, reading, _ = receiving(deliveries, tmp_path)
+    lines = reading.with_suffix(".count.csv").read_text(encoding="utf-8").splitlines()
+    damaged = tmp_path / "damaged.csv"
+    damaged.write_text(
+        "\n".join([f"{lines[0]},Damaged", f"{lines[1]},2", *lines[2:]]) + "\n", encoding="utf-8"
+    )
+    posted = tmp_path / "posted"
+    capsys.readouterr()
+
+    assert main([*receive, "--count", str(damaged), "--approve-by", "Ravi", "--out",
+                 str(posted)]) == 0  # fmt: skip
+    printed = capsys.readouterr().out
+    assert "Damaged" in printed and "2 billed units of batch" in printed
+    assert "Debit note for units not received or received damaged: " in printed
+    (note,) = posted.glob("*.debit-note.txt")
+    text = note.read_text(encoding="utf-8")
+    assert "Billed and received damaged when the delivery was counted on 30/01/2026" in text
+    assert "not received" not in text.split("DEBIT NOTE", 1)[1].split("Billed and", 1)[0]
+    (voucher,) = posted.glob("*.marg-purchase.csv")
+    first = next(csv.DictReader(voucher.read_text(encoding="utf-8").splitlines()))
+    assert int(first["QTY"]) == int(lines[1].rsplit(",", 1)[1]) - 2
 
 
 def test_a_request_replaced_by_a_recount_and_then_rejected_writes_nothing(
