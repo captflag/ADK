@@ -3,19 +3,20 @@
 ``whatsapp serve`` runs the webhook WhatsApp delivers approvers' replies to.
 ``whatsapp notify`` sends a request waiting for approval to every approver, with
 Approve and Reject buttons; ``intake receive --notify`` and ``claims draft
---notify`` do the same as they put something up for approval. The access token,
-app secret and verify token are read from the environment, usually ``.env``.
+--notify`` do the same as they put something up for approval, and ``brief
+--send`` for every request the morning brief lists. The access token, app secret
+and verify token are read from the environment, usually ``.env``.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
+from batchward.arguments import env_path
 from batchward.channels.replies import ApproversFileError, load_approvers
-from batchward.channels.whatsapp import Settings, WhatsAppError, notify
+from batchward.channels.whatsapp import Settings, WhatsAppError, last_heard, notify
 from batchward.core.approvals import ApprovalRequest, RequestState
 from batchward.records.store import RecordsError, RecordStore
 
@@ -40,20 +41,15 @@ def _where(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--records",
         type=Path,
-        default=_env_path("BATCHWARD_RECORDS"),
+        default=env_path("BATCHWARD_RECORDS"),
         help="Batchward records database (default BATCHWARD_RECORDS)",
     )
     parser.add_argument(
         "--approvers",
         type=Path,
-        default=_env_path("BATCHWARD_APPROVERS"),
+        default=env_path("BATCHWARD_APPROVERS"),
         help="CSV of phone,name for who may approve (default BATCHWARD_APPROVERS)",
     )
-
-
-def _env_path(name: str) -> Path | None:
-    value = os.environ.get(name, "").strip()
-    return Path(value) if value else None
 
 
 def _serve(args: argparse.Namespace) -> int:
@@ -84,21 +80,27 @@ def _notify(args: argparse.Namespace) -> int:
                 raise RecordsError(f"{request.number} is not waiting for approval")
     except (RecordsError, OSError, ValueError) as error:
         return _fail(error)
-    return notify_approvers(request, approvers=args.approvers)
+    return notify_approvers(request, approvers=args.approvers, records=args.records)
 
 
-def notify_approvers(request: ApprovalRequest, *, approvers: Path | None) -> int:
-    """Send a request to every approver on WhatsApp, saying who it reached."""
+def notify_approvers(request: ApprovalRequest, *, approvers: Path | None, records: Path) -> int:
+    """Send a request to every approver on WhatsApp, saying who it reached.
+
+    The records say when each approver last wrote, which decides what WhatsApp
+    will deliver to them (ADR 0019).
+    """
     if approvers is None:
         return _fail("sending needs --approvers or BATCHWARD_APPROVERS: who may approve")
     try:
         settings = Settings.from_env()
         people = load_approvers(approvers)
-    except (WhatsAppError, ApproversFileError, OSError) as error:
+        with RecordStore(records, create=False) as store:
+            heard = last_heard(store.messages())
+    except (WhatsAppError, ApproversFileError, RecordsError, OSError) as error:
         return _fail(error)
     if not people:
         return _fail(f"{approvers} lists nobody who may approve")
-    results = notify(request, people, settings)
+    results = notify(request, people, settings, heard=heard)
     for name, problem in results.items():
         print(f"  {name}: {'sent' if problem is None else problem}")
     sent = sum(problem is None for problem in results.values())
@@ -110,8 +112,8 @@ def notifier(args: argparse.Namespace):
     """With ``--notify``, what sends a request put up for approval to the approvers."""
     if not getattr(args, "notify", False):
         return None
-    approvers = getattr(args, "approvers", None) or _env_path("BATCHWARD_APPROVERS")
-    return lambda request: notify_approvers(request, approvers=approvers)
+    approvers = getattr(args, "approvers", None) or env_path("BATCHWARD_APPROVERS")
+    return lambda request: notify_approvers(request, approvers=approvers, records=args.records)
 
 
 def _check(args: argparse.Namespace) -> None:

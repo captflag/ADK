@@ -202,6 +202,8 @@ in `.env` (see `.env.example`), list approvers in a CSV of `phone,name`, and run
 (for example through a tunnel). `batchward whatsapp notify A-0001` sends a waiting
 request to every approver, as `--notify` does when putting something up for
 approval; an approver taps Approve, or replies `reject A-0001` and the reason.
+Without an approval template, only approvers who wrote to the business number
+in the last 24 hours can be sent a request, which is what WhatsApp delivers.
 
 ### Talk to the agents
 

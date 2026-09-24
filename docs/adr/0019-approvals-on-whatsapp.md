@@ -76,3 +76,13 @@ once.
   people and cost money; a person decides to send them.
 - **Carrying the ADK invocation id in the button.** The request number is what a
   person reads and types, and it finds the paused run (ADR 0005).
+
+## Amendment, 2026-09-22: the 24-hour window is checked before sending
+
+Meta accepts a free-form message sent outside the 24-hour window and then does
+not deliver it, so `notify` reported requests as sent that nobody received.
+When each approver last wrote is now read from the messages the webhook
+recorded. Without an approval template, a request is not sent to an approver
+who has not written in the last 24 hours, and the command says why. With a
+template, nothing changes. The morning brief follows the same rule (ADR 0021),
+and replying `brief` gets the latest one.

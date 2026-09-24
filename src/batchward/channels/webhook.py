@@ -12,14 +12,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Request, Response
 
 from batchward.channels.replies import ApproversFileError, answer_reply, load_approvers
 from batchward.channels.whatsapp import (
+    Sender,
     Settings,
     WhatsAppError,
     challenge,
@@ -30,8 +29,6 @@ from batchward.channels.whatsapp import (
 )
 
 logger = logging.getLogger("batchward.whatsapp")
-
-Sender = Callable[[Settings, dict[str, Any]], Any]
 
 
 def create_app(

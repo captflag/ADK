@@ -2,7 +2,7 @@ import hashlib
 import hmac
 import json
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -17,12 +17,16 @@ from batchward.channels.whatsapp import (
     Settings,
     WhatsAppError,
     approval_message,
+    brief_message,
     challenge,
+    last_heard,
     notify,
     replies,
     send,
+    send_brief,
     signed,
     text_message,
+    window_open,
 )
 from batchward.core.approvals import ApprovalRequest
 
@@ -41,6 +45,8 @@ REQUEST = ApprovalRequest(
     requested_at=datetime(2026, 1, 30, 10, tzinfo=UTC),
     session_id="s1",
 )
+NOW = datetime(2026, 1, 31, 8, tzinfo=UTC)
+LATELY = NOW - timedelta(hours=3)
 
 
 def test_an_approval_request_carries_approve_and_reject_buttons_naming_it():
@@ -100,13 +106,97 @@ def test_every_approver_is_sent_the_request_and_failures_are_named():
         if message["to"] == "+919000000002":
             raise WhatsAppError("WhatsApp refused the message (400): not a valid recipient")
 
-    results = notify(
-        REQUEST, {"919000000001": "Ravi", "919000000002": "Asha"}, SETTINGS, sender=sender
-    )
+    people = {"919000000001": "Ravi", "919000000002": "Asha"}
+    heard = dict.fromkeys(people, LATELY)
+    results = notify(REQUEST, people, SETTINGS, heard=heard, now=NOW, sender=sender)
     assert results == {
         "Ravi": None,
         "Asha": "WhatsApp refused the message (400): not a valid recipient",
     }
+
+
+def test_without_a_template_nobody_silent_for_a_day_is_sent_a_request():
+    sent = []
+    people = {"919000000001": "Ravi", "919000000002": "Asha", "919000000003": "Mohan"}
+    heard = {"919000000001": LATELY, "919000000002": NOW - timedelta(hours=24)}
+
+    def sender(settings, message):
+        sent.append((message["to"], message["type"]))
+
+    results = notify(REQUEST, people, SETTINGS, heard=heard, now=NOW, sender=sender)
+    assert results["Ravi"] is None
+    assert "last 24 hours" in results["Asha"] and "WHATSAPP_APPROVAL_TEMPLATE" in results["Mohan"]
+    assert sent == [("+919000000001", "interactive")]
+
+    sent.clear()
+    templated = replace(SETTINGS, template="batchward_approval")
+    results = notify(REQUEST, people, templated, heard=heard, now=NOW, sender=sender)
+    assert results == dict.fromkeys(people.values())
+    assert [kind for _, kind in sent] == ["template"] * 3
+
+
+def test_when_each_person_last_wrote_is_read_from_the_whatsapp_messages_recorded():
+    messages = [
+        ("whatsapp", "m1", "919000000001", "approve A-0001", NOW - timedelta(days=2)),
+        ("whatsapp", "m2", "919000000001", "brief", LATELY),
+        ("whatsapp", "m3", "919000000001", "hello", NOW - timedelta(days=5)),
+        ("sms", "s1", "919000000002", "approve A-0001", LATELY),
+    ]
+    assert last_heard(messages) == {"919000000001": LATELY}
+    assert window_open(NOW - timedelta(hours=23, minutes=59), NOW)
+    assert not window_open(NOW - timedelta(hours=24), NOW)
+    assert not window_open(None, NOW)
+
+
+def test_the_brief_template_carries_the_day_its_headline_and_a_button_asking_for_it():
+    headline = "Recall ₹44,201 · To order ₹9,88,464\n\tand  more"
+    message = brief_message(
+        date(2026, 9, 1), headline, "919812345678", template="batchward_brief", language="en_US"
+    )
+    template = message["template"]
+    assert (message["type"], message["to"], template["name"], template["language"]) == (
+        "template",
+        "+919812345678",
+        "batchward_brief",
+        {"code": "en_US"},
+    )
+    body, button = template["components"]
+    assert [p["text"] for p in body["parameters"]] == [
+        "Tue 01/09/2026",
+        "Recall ₹44,201 · To order ₹9,88,464 and more",
+    ]
+    assert (button["sub_type"], button["index"], button["parameters"]) == (
+        "quick_reply",
+        0,
+        [{"type": "payload", "payload": "brief"}],
+    )
+
+
+def test_the_brief_goes_as_text_inside_the_window_and_as_its_template_outside():
+    sent = []
+    people = {"919000000001": "Ravi", "919000000002": "Asha"}
+    heard = {"919000000001": LATELY}
+
+    def sender(settings, message):
+        sent.append(message)
+
+    def brief(settings):
+        text = "Batchward brief for Tue 01/09/2026\n1. Recall"
+        return send_brief(
+            date(2026, 9, 1), text, "Recall ₹44,201", people, settings,
+            heard=heard, now=NOW, sender=sender,
+        )  # fmt: skip
+
+    results = brief(SETTINGS)
+    assert results["Ravi"] is None and "WHATSAPP_BRIEF_TEMPLATE" in results["Asha"]
+    (text,) = sent
+    assert text["text"]["body"] == "Batchward brief for Tue 01/09/2026\n1. Recall"
+
+    sent.clear()
+    assert brief(replace(SETTINGS, brief_template="batchward_brief")) == dict.fromkeys(
+        people.values()
+    )
+    assert [message["type"] for message in sent] == ["text", "template"]
 
 
 def test_settings_come_from_the_environment_and_name_what_is_missing():
@@ -123,6 +213,8 @@ def test_settings_come_from_the_environment_and_name_what_is_missing():
         "v25.0",
         "en",
     )
+    assert settings.brief_template is None
+    assert Settings.from_env({**env, "WHATSAPP_BRIEF_TEMPLATE": " b "}).brief_template == "b"
     with pytest.raises(WhatsAppError, match="set WHATSAPP_APP_SECRET, WHATSAPP_VERIFY_TOKEN"):
         Settings.from_env({"WHATSAPP_TOKEN": "t", "WHATSAPP_PHONE_NUMBER_ID": "1"})
 

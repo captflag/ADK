@@ -894,7 +894,7 @@ def test_whatsapp_notify_sends_a_waiting_request_to_every_approver(
         monkeypatch.setenv(f"WHATSAPP_{name}", "test")
     sent = []
 
-    def fake(request, people, settings):
+    def fake(request, people, settings, **_):
         sent.extend(people)
         return {
             name: None if phone.endswith("678") else "refused" for phone, name in people.items()

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 
 
 def positive_int(text: str) -> int:
@@ -29,6 +31,12 @@ def rupees(text: str) -> Decimal:
     if not value.is_finite():
         raise argparse.ArgumentTypeError(f"not an amount: {text!r}")
     return value
+
+
+def env_path(name: str) -> Path | None:
+    """A path from an environment variable, usually set in ``.env``, or None if it is not set."""
+    value = os.environ.get(name, "").strip()
+    return Path(value) if value else None
 
 
 def _int(text: str) -> int:

@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import shutil
+from datetime import UTC, date, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,7 +11,7 @@ from batchward.channels.webhook import create_app
 from batchward.channels.whatsapp import Settings, WhatsAppError
 from batchward.cli import main
 from batchward.core.approvals import RequestState
-from batchward.records.store import RecordStore
+from batchward.records.store import KeptBrief, RecordStore
 
 SETTINGS = Settings(
     token="test-token",
@@ -168,3 +169,21 @@ def test_a_reply_that_cannot_be_sent_does_not_stop_the_webhook(waiting):
     client = TestClient(create_app(SETTINGS, records=records, approvers=approvers, sender=refuse))
     assert post(client, tap("approve:A-0001")).status_code == 200
     assert state(records)[0] is RequestState.APPROVED
+
+
+def test_asking_for_the_brief_gets_the_latest_one_kept(webhook, waiting):
+    client, sent = webhook
+    records, _, _ = waiting
+    post(client, typed("Brief"))
+    assert sent[-1]["text"]["body"] == "No brief has been sent yet."
+    with RecordStore(records) as store:
+        for day in (30, 31):
+            store.save_brief(
+                KeptBrief(date(2026, 1, day), datetime(2026, 1, day, 2, 30, tzinfo=UTC),
+                          f"Batchward brief for {day}/01/2026")
+            )  # fmt: skip
+    button = {"from": RAVI, "id": "wamid.5", "timestamp": "1769767300", "type": "button",
+              "button": {"payload": "brief", "text": "Show brief"}}  # fmt: skip
+    post(client, button)
+    assert sent[-1]["text"]["body"] == "Batchward brief for 31/01/2026"
+    assert state(records)[0] is RequestState.WAITING

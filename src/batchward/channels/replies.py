@@ -8,8 +8,10 @@ answers: a button carries it, and typed replies carry it too:
     reject A-0012 count it again
 
 A rejection needs a reason, so the reject button asks for one rather than
-rejecting on its own. Every reply from an approver is recorded once, by the
-channel's message id, so a message delivered twice is answered once.
+rejecting on its own. Replying ``brief``, or tapping the button of the template
+announcing one, gets the latest morning brief (ADR 0021). Every reply from an
+approver is recorded once, by the channel's message id, so a message delivered
+twice is answered once.
 """
 
 from __future__ import annotations
@@ -25,6 +27,9 @@ from batchward.agents import approval_flow
 from batchward.agents.approval_flow import Answer, Outcome
 from batchward.core.approvals import RequestState
 from batchward.records.store import RecordsError, RecordStore
+
+BRIEF = "brief"
+"""What an approver replies, or a template's button sends, to get the latest brief."""
 
 _COMMAND = re.compile(r"\s*(approve|reject)\s*[:\s]\s*(A-?\d+)\b\s*(.*)", re.IGNORECASE | re.DOTALL)
 
@@ -106,6 +111,9 @@ async def answer_reply(reply: Reply, *, records: Path, approvers: dict[str, str]
                 reply.channel, reply.message_id, reply.sender, reply.text, reply.at
             ):
                 return None
+            if reply.text.strip().lower() == BRIEF:
+                kept = store.latest_brief()
+                return kept.text if kept is not None else "No brief has been sent yet."
             asked = command(reply.text)
             if asked is None:
                 return _HELP
@@ -148,5 +156,6 @@ def describe(outcome: Outcome) -> str:
 
 _HELP = (
     "To answer a request, reply: approve A-0012, or reject A-0012 and the reason. "
-    "Requests waiting are listed by `batchward approvals list`."
+    "Requests waiting are listed by `batchward approvals list`. "
+    "Reply brief for the latest morning brief."
 )

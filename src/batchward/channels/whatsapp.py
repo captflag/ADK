@@ -4,7 +4,14 @@ A request for approval goes to each approver as a message with two buttons,
 Approve and Reject, whose payloads name the request. Inside the 24 hours after
 an approver last wrote to the business number, WhatsApp allows a free-form
 interactive message; outside it, only an approved template, so a template name
-can be configured for approval requests, with two quick-reply buttons.
+can be configured for approval requests, with two quick-reply buttons. When
+each approver last wrote is known from the messages the webhook recorded, and
+nobody is sent a free-form message outside that window, which WhatsApp would
+accept and then never deliver.
+
+The morning brief (ADR 0021) goes as a text message inside the window. Outside
+it, a template carries the brief's one-line headline and a button asking for
+the brief, which is then sent in full.
 
 Replies come back to a webhook. Meta signs each delivery with the app secret,
 and a delivery whose signature does not match is refused before it is read.
@@ -20,12 +27,12 @@ import json
 import os
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from batchward.channels.replies import Reply, phone_number
+from batchward.channels.replies import BRIEF, Reply, phone_number
 from batchward.core.approvals import ApprovalRequest
 
 CHANNEL = "whatsapp"
@@ -35,6 +42,8 @@ BODY_LIMIT = 1024
 API_VERSION = "v25.0"
 """The Graph API version Meta's Cloud API documentation shows; WHATSAPP_API_VERSION overrides."""
 LANGUAGE = "en"
+WINDOW = timedelta(hours=24)
+"""How long after a person last wrote that WhatsApp takes a free-form message to them."""
 
 
 class WhatsAppError(RuntimeError):
@@ -51,6 +60,8 @@ class Settings:
     template: str | None = None
     """An approved template for approval requests, needed outside the 24-hour window."""
     language: str = LANGUAGE
+    brief_template: str | None = None
+    """An approved template announcing the morning brief, needed outside the 24-hour window."""
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -69,6 +80,7 @@ class Settings:
             api_version=env.get("WHATSAPP_API_VERSION", "").strip() or API_VERSION,
             template=env.get("WHATSAPP_APPROVAL_TEMPLATE", "").strip() or None,
             language=env.get("WHATSAPP_TEMPLATE_LANGUAGE", "").strip() or LANGUAGE,
+            brief_template=env.get("WHATSAPP_BRIEF_TEMPLATE", "").strip() or None,
         )
 
     @property
@@ -128,6 +140,47 @@ def approval_message(
             },
         },
     }
+
+
+def brief_message(
+    day: date, headline: str, to: str, *, template: str, language: str = "en"
+) -> dict[str, Any]:
+    """The template announcing a brief: its day and headline, and a button asking for it.
+
+    The template's body has two variables, the day and the headline, and one
+    quick-reply button; tapping it sends ``brief`` back, which is answered with the
+    brief in full.
+    """
+    return {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": recipient(to),
+        "type": "template",
+        "template": {
+            "name": template,
+            "language": {"code": language},
+            "components": [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"type": "text", "text": f"{day:%a %d/%m/%Y}"},
+                        {"type": "text", "text": _one_line(headline)},
+                    ],
+                },
+                {
+                    "type": "button",
+                    "sub_type": "quick_reply",
+                    "index": 0,
+                    "parameters": [{"type": "payload", "payload": BRIEF}],
+                },
+            ],
+        },
+    }
+
+
+def _one_line(text: str) -> str:
+    """Text as a template variable takes it: no line breaks or tabs, no runs of spaces."""
+    return " ".join(text.split())
 
 
 def recipient(phone: str) -> str:
@@ -236,23 +289,104 @@ def _text(message: Mapping[str, Any]) -> str | None:
     return None
 
 
-def notify(
-    request: ApprovalRequest,
+def last_heard(messages: Iterable[tuple[str, str, str, str, datetime]]) -> dict[str, datetime]:
+    """When each person last wrote on WhatsApp, by phone number, from the messages recorded."""
+    heard: dict[str, datetime] = {}
+    for channel, _id, sender, _body, at in messages:
+        if channel == CHANNEL and (sender not in heard or at > heard[sender]):
+            heard[sender] = at
+    return heard
+
+
+def window_open(heard: datetime | None, now: datetime) -> bool:
+    """Whether WhatsApp takes a free-form message: the person wrote within the last 24 hours."""
+    return heard is not None and now - heard < WINDOW
+
+
+def _outside_window(setting: str) -> str:
+    return (
+        "has not written to the business number in the last 24 hours, when WhatsApp "
+        f"takes only an approved template: set {setting} in .env"
+    )
+
+
+Sender = Callable[[Settings, dict[str, Any]], Any]
+
+
+def _send_each(
     approvers: Mapping[str, str],
     settings: Settings,
-    *,
-    sender: Callable[[Settings, dict[str, Any]], Any] = send,
+    message: Callable[[str], dict[str, Any] | str],
+    sender: Sender,
 ) -> dict[str, str | None]:
-    """Send a request for approval to every approver; by name, None if sent or why not."""
+    """Send each approver their message; by name, None if sent, or why not."""
     results: dict[str, str | None] = {}
     for phone, name in approvers.items():
-        message = approval_message(
-            request, phone, template=settings.template, language=settings.language
-        )
+        built = message(phone)
+        if isinstance(built, str):
+            results[name] = built
+            continue
         try:
-            sender(settings, message)
+            sender(settings, built)
         except WhatsAppError as error:
             results[name] = str(error)
         else:
             results[name] = None
     return results
+
+
+def notify(
+    request: ApprovalRequest,
+    approvers: Mapping[str, str],
+    settings: Settings,
+    *,
+    heard: Mapping[str, datetime],
+    now: datetime | None = None,
+    sender: Sender = send,
+) -> dict[str, str | None]:
+    """Send a request for approval to every approver; by name, None if sent or why not.
+
+    ``heard`` is when each approver last wrote, by phone number. Without an
+    approval template, an approver who has not written in the last 24 hours is
+    not sent the request, and the reason is given instead.
+    """
+    moment = now or datetime.now(UTC)
+
+    def message(phone: str) -> dict[str, Any] | str:
+        if settings.template is None and not window_open(heard.get(phone), moment):
+            return _outside_window("WHATSAPP_APPROVAL_TEMPLATE")
+        return approval_message(
+            request, phone, template=settings.template, language=settings.language
+        )
+
+    return _send_each(approvers, settings, message, sender)
+
+
+def send_brief(
+    day: date,
+    text: str,
+    headline: str,
+    approvers: Mapping[str, str],
+    settings: Settings,
+    *,
+    heard: Mapping[str, datetime],
+    now: datetime | None = None,
+    sender: Sender = send,
+) -> dict[str, str | None]:
+    """Send the morning brief to every approver; by name, None if sent or why not.
+
+    An approver who wrote in the last 24 hours is sent the brief itself; anyone
+    else the brief template, if one is set, whose button asks for the brief.
+    """
+    moment = now or datetime.now(UTC)
+
+    def message(phone: str) -> dict[str, Any] | str:
+        if window_open(heard.get(phone), moment):
+            return text_message(phone, text)
+        if settings.brief_template is None:
+            return _outside_window("WHATSAPP_BRIEF_TEMPLATE")
+        return brief_message(
+            day, headline, phone, template=settings.brief_template, language=settings.language
+        )
+
+    return _send_each(approvers, settings, message, sender)
