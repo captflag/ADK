@@ -8,8 +8,8 @@ approvals people gave before anything was written for Marg to import (ADR 0005),
 what each approved bill received against its purchase order (ADR 0017), and
 each company's return terms with the expiry claims made on it and the credit
 notes that settle them (ADR 0018), the messages approvers sent (ADR 0019),
-and the purchase orders placed on approval (ADR 0020). They are kept here, in a
-database file of their own (ADR 0010).
+the purchase orders placed on approval (ADR 0020), and each morning brief
+sent (ADR 0021). They are kept here, in a database file of their own (ADR 0010).
 
 Like the ledger (ADR 0001) these records are only ever added to. The database
 enforces that itself: triggers refuse every UPDATE and DELETE, so a mistake is
@@ -27,6 +27,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -205,6 +206,15 @@ CREATE TABLE purchase_order_lines (
 );
 """ + _only_ever_added_to("purchase_orders", "purchase_order_lines")
 
+_BRIEFS = """
+CREATE TABLE briefs (
+    day TEXT NOT NULL,
+    made_at TEXT NOT NULL,
+    body TEXT NOT NULL,
+    PRIMARY KEY (day, made_at)
+);
+""" + _only_ever_added_to("briefs")
+
 MIGRATIONS: tuple[str, ...] = (
     _RECALLS,
     _CEILINGS,
@@ -214,6 +224,7 @@ MIGRATIONS: tuple[str, ...] = (
     _CLAIMS,
     _MESSAGES,
     _ORDERS,
+    _BRIEFS,
 )
 """Each entry takes the database from the schema before it to the next. Never edit one."""
 SCHEMA_VERSION = len(MIGRATIONS)
@@ -226,12 +237,23 @@ _TABLES: tuple[set[str], ...] = (
     {"return_terms", "claims", "claim_lines", "claim_settlements"},
     {"channel_messages"},
     {"purchase_orders", "purchase_order_lines"},
+    {"briefs"},
 )
 """The tables each migration creates, to recognise a file that only claims to be one."""
 
 
 class RecordsError(Exception):
     """The records cannot be read or would be contradicted."""
+
+
+@dataclass(frozen=True, slots=True)
+class KeptBrief:
+    """A morning brief as it was sent (ADR 0021)."""
+
+    day: date
+    """The day the brief is for."""
+    made_at: datetime
+    text: str
 
 
 class RecordStore:
@@ -782,6 +804,29 @@ class RecordStore:
         rows = self._connection.execute("SELECT * FROM channel_messages ORDER BY rowid")
         return [(c, i, s, b, datetime.fromisoformat(t)) for c, i, s, b, t in rows]
 
+    def save_brief(self, brief: KeptBrief) -> None:
+        """Keep a morning brief as it is about to be sent, so it can be read back later."""
+        if brief.made_at.tzinfo is None:
+            raise ValueError("a brief's time must be timezone-aware")
+        with self.atomically():
+            self._insert(
+                "INSERT INTO briefs VALUES (?, ?, ?)",
+                (brief.day.isoformat(), brief.made_at.isoformat(), brief.text),
+                f"the brief for {brief.day.isoformat()} made at {brief.made_at.isoformat()}",
+            )
+
+    def briefs(self) -> list[KeptBrief]:
+        """Every brief kept, in the order they were made."""
+        rows = self._connection.execute("SELECT * FROM briefs ORDER BY rowid")
+        return [_read(_brief, row, "brief") for row in rows]
+
+    def latest_brief(self) -> KeptBrief | None:
+        """The brief made last, or None if none has been kept."""
+        row = self._connection.execute(
+            "SELECT * FROM briefs ORDER BY rowid DESC LIMIT 1"
+        ).fetchone()
+        return None if row is None else _read(_brief, row, "brief")
+
     def save_received(self, approval_id: str, order_no: str, units: Mapping[str, int]) -> None:
         """Record the units of each item an approved bill received against a purchase order.
 
@@ -917,6 +962,11 @@ def _settlement(row: tuple) -> Settlement:
         received_on=date.fromisoformat(row[3]),
         recorded_by=row[4],
     )
+
+
+def _brief(row: tuple) -> KeptBrief:
+    day, made_at, text = row
+    return KeptBrief(date.fromisoformat(day), datetime.fromisoformat(made_at), text)
 
 
 def _approval_request(row: tuple) -> ApprovalRequest:
