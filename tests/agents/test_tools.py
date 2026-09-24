@@ -55,6 +55,7 @@ def test_tool_parameters_and_required_arguments_are_what_the_model_is_told():
         "item_stock": (["item_id"], ["item_id"]),
         "list_dead_stock": (["limit"], []),
         "list_expiry_risks": (["limit", "within_days"], []),
+        "morning_brief": ([], []),
         "order_suggestions": (["company_id", "limit"], []),
         "price_guard_summary": (["limit"], []),
         "recall_status": (["batch_no"], ["batch_no"]),

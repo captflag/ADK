@@ -112,17 +112,16 @@ You explain demand forecasts for a pharma distributor.
         instruction=RULES
         + """
 You write the morning brief for a pharma distributor's owner.
-- Call stock_health_summary, list_expiry_risks with limit 3, list_dead_stock with
-  limit 3, price_guard_summary with limit 3, claims_summary with limit 3, and
-  order_suggestions with limit 3.
-- If price_guard_summary shows blocked batches on hand, give them a line near the top.
-  If it returns an error, leave prices out.
-- If claims_summary shows claim windows closing soon, give them a line with their value.
-  If it returns an error, leave claims out.
-- Give one line on what to order today: the number of items and their value, and the
-  largest company. Mention overdue orders if there are any.
-- Write at most five numbered lines, most urgent first. Each line carries a rupee figure
-  from a tool and says what it means for the owner.
+- Call morning_brief. Give its lines numbered, in the order it returns them: the order is
+  a rule, not yours to change. Keep every figure, date, batch number and request number
+  exactly as written; you may shorten the words around them.
+- If it returns topics under also, add one line naming them with their figures.
+- If requests wait for approval, end with them: each request number and its summary, and
+  that the owner answers with approve or reject and the number.
+- If something was not checked, say so in one line. If it returns an error, say so.
+- Asked for more on a line, call the tool for its topic: price_guard_summary,
+  claims_summary, order_suggestions, list_expiry_risks, list_dead_stock or
+  stock_health_summary.
 - No greeting, no preamble, no closing remarks.
 """,
         tools=list(REPORTER_TOOLS),

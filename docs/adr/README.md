@@ -26,3 +26,4 @@ record that supersedes the old one.
 | [0018](0018-expiry-claims-from-dated-return-terms.md) | Expiry claims are drafted from dated return terms and made only on approval | Accepted |
 | [0019](0019-approvals-on-whatsapp.md) | Approvals are answered on WhatsApp by approvers known by phone number | Accepted |
 | [0020](0020-purchase-orders-drafted-from-the-forecast.md) | Purchase orders are drafted from the forecast and placed only on approval | Accepted |
+| [0021](0021-morning-brief-worked-out-in-python.md) | The morning brief is worked out in Python and sent on WhatsApp | Accepted |

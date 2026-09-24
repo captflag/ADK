@@ -18,6 +18,7 @@ from batchward.approvals_cli import add_approval_commands
 from batchward.arguments import non_negative_int, positive_int
 from batchward.bridge.marg_export import export_to_marg
 from batchward.bridge.marg_layout import format_expiry
+from batchward.brief_cli import add_brief_commands
 from batchward.claims_cli import add_claims_commands
 from batchward.intake_cli import add_intake_commands
 from batchward.orders_cli import add_orders_commands
@@ -113,6 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     add_claims_commands(commands)
     add_orders_commands(commands)
     add_whatsapp_commands(commands)
+    add_brief_commands(commands)
 
     args = parser.parse_args(argv)
     return args.handler(args)

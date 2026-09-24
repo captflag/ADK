@@ -2,7 +2,7 @@ import json
 import shutil
 import sqlite3
 from contextlib import closing
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -11,6 +11,7 @@ from batchward import price_cli
 from batchward.bridge.marg_contract import check_layout
 from batchward.bridge.marg_import import read_ledger, read_masters
 from batchward.buying.planning import plan_for
+from batchward.channels import whatsapp
 from batchward.claims.submission import draft_for
 from batchward.cli import main
 from batchward.core.approvals import Approval
@@ -911,6 +912,68 @@ def test_whatsapp_notify_sends_a_waiting_request_to_every_approver(
     assert "who may approve" in capsys.readouterr().err
     assert main([*notify[:2], "A-0404", *notify[3:], "--approvers", str(approvers)]) == 1
     assert "no request A-0404" in capsys.readouterr().err
+
+
+def test_the_brief_is_printed_and_sent_with_each_request_waiting_for_approval(
+    deliveries, tmp_path, capsys, monkeypatch
+):
+    receive, reading, records = receiving(deliveries, tmp_path)
+    count = str(reading.with_suffix(".count.csv"))
+    assert main([*receive, "--count", count, "--out", str(tmp_path / "out")]) == 0
+    for name in ("MARG_DB", "RECORDS", "APPROVERS"):
+        monkeypatch.delenv(f"BATCHWARD_{name}", raising=False)
+    for name in ("TOKEN", "PHONE_NUMBER_ID", "APP_SECRET", "VERIFY_TOKEN"):
+        monkeypatch.delenv(f"WHATSAPP_{name}", raising=False)
+    for name in ("APPROVAL", "BRIEF"):
+        monkeypatch.delenv(f"WHATSAPP_{name}_TEMPLATE", raising=False)
+    brief = ["brief", "--marg", str(deliveries / "marg.sqlite"), "--records", str(records)]
+    approvers = tmp_path / "approvers.csv"
+    approvers.write_text("919812345678,Ravi\n919000000002,Asha\n", encoding="utf-8")
+    capsys.readouterr()
+
+    assert main(brief) == 0
+    printed = capsys.readouterr().out
+    assert printed.startswith("Batchward brief for Sat 31/01/2026\n1. ")
+    assert "\nWaiting for approval:\n- A-0001 (purchase voucher, " in printed
+    assert main(["brief"]) == 1
+    assert "give --marg or set BATCHWARD_MARG_DB" in capsys.readouterr().err
+    assert main([*brief[:3], "--send"]) == 1
+    assert "sending needs --records" in capsys.readouterr().err
+    assert main([*brief, "--send", "--approvers", str(approvers)]) == 1
+    assert "set WHATSAPP_TOKEN" in capsys.readouterr().err
+
+    for name in ("TOKEN", "PHONE_NUMBER_ID", "APP_SECRET", "VERIFY_TOKEN"):
+        monkeypatch.setenv(f"WHATSAPP_{name}", "test")
+    with RecordStore(records) as store:
+        assert store.briefs() == []
+        wrote = datetime.now(UTC) - timedelta(hours=1)
+        store.save_message("whatsapp", "wamid.1", "919812345678", "hello", wrote)
+    sent = []
+
+    def record(settings, message):
+        sent.append(message)
+
+    real_brief, real_notify = whatsapp.send_brief, whatsapp.notify
+    monkeypatch.setattr(
+        "batchward.brief_cli.send_brief", lambda *a, **k: real_brief(*a, **k, sender=record)
+    )
+    monkeypatch.setattr(
+        "batchward.brief_cli.notify", lambda *a, **k: real_notify(*a, **k, sender=record)
+    )
+    assert main([*brief, "--send", "--approvers", str(approvers)]) == 0
+    printed = capsys.readouterr().out
+    assert "  Ravi: sent\n  Asha: has not written to the business number" in printed
+    assert "set WHATSAPP_BRIEF_TEMPLATE in .env" in printed
+    assert "Sent the brief to 1 of 2 approvers on WhatsApp." in printed
+    assert "Sent A-0001, with its buttons, to 1 of 2 approvers." in printed
+    assert [(message["to"], message["type"]) for message in sent] == [
+        ("+919812345678", "text"),
+        ("+919812345678", "interactive"),
+    ]
+    with RecordStore(records, create=False) as store:
+        (kept,) = store.briefs()
+    assert sent[0]["text"]["body"] == kept.text and printed.startswith(kept.text)
+    assert kept.day == date(2026, 1, 31)
 
 
 def test_orders_are_suggested_drafted_approved_and_then_counted_as_coming(

@@ -205,6 +205,17 @@ approval; an approver taps Approve, or replies `reject A-0001` and the reason.
 Without an approval template, only approvers who wrote to the business number
 in the last 24 hours can be sent a request, which is what WhatsApp delivers.
 
+```bash
+uv run batchward brief --marg sim-out/marg.sqlite --records sim-out/records.sqlite
+```
+
+prints the morning brief. With `--send` it is kept in the records and sent to
+every approver on WhatsApp, followed by each request waiting with its buttons;
+an approver outside the 24 hours gets the `WHATSAPP_BRIEF_TEMPLATE` template,
+whose button, like replying `brief`, gets the brief in full. Batchward does not
+wake itself: run `uv run --env-file .env batchward brief --send` each morning
+from Task Scheduler or cron.
+
 ### Talk to the agents
 
 Copy `.env.example` to `.env`, add a Gemini API key, and point
@@ -228,8 +239,12 @@ src/batchward/
   bridge/     Marg ERP layout, export, import, layout checks, reconciliation
   analysis/   demand, forecasting, backtests, costs, ageing, expiry, stock health
   compliance/ recall, price guard, and the Rule 65 registrar
-  records/    Batchward's own database: recall notices, holds, releases
-  reporting/  presentation: rupees in Indian digit grouping, the recall report
+  intake/     supplier invoices read, checked, matched and posted on approval
+  buying/     what to order, and purchase orders
+  claims/     return terms, claim windows and expiry claims
+  records/    Batchward's own database: notices, holds, prices, approvals, claims, briefs
+  reporting/  presentation: rupees in Indian digit grouping, the recall report, the brief
+  channels/   WhatsApp: approval buttons, the brief, and the webhook for replies
   agents/     the ADK agent team, its read-only tools, and the data they read
   cli.py      command-line entry point; *_cli.py modules hold the subcommands
 agents/desk/  entry point that `adk web` and `adk run` load

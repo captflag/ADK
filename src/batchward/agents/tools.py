@@ -45,6 +45,7 @@ from batchward.core.holds import Hold, HoldLog
 from batchward.core.trace import trace_batch
 from batchward.records import recalls
 from batchward.records.store import RecordsError, RecordStore
+from batchward.reporting import brief as briefing
 from batchward.reporting.inr import format_inr
 from batchward.reporting.recall import format_moment
 
@@ -734,6 +735,43 @@ def order_suggestions(company_id: str = "", limit: int = 10) -> dict:
     }
 
 
+def morning_brief() -> dict:
+    """The morning brief, worked out in code: at most five lines, most urgent first, each about
+    one thing the owner can act on today and each with its rupee figure; other topics that did
+    not fit, with their figures; and the requests waiting for approval, oldest first, with their
+    numbers. Use this for the morning brief or a daily summary, and keep its order."""
+    data = current()
+    path = records_path()
+    try:
+        if path is None or not path.is_file():
+            brief = briefing.morning_brief(data, None)
+        else:
+            with RecordStore(path, create=False) as store:
+                brief = briefing.morning_brief(data, store)
+    except (RecordsError, sqlite3.Error, ValueError) as error:
+        return {"error": f"the records cannot be read: {error}"}
+    return {
+        "as_of": brief.on.isoformat(),
+        "lines": [
+            {"topic": str(line.topic), "text": line.text, "figure": _money(line.rupees)}
+            for line in brief.shown
+        ],
+        "also": [{"topic": str(line.topic), "figure": _money(line.rupees)} for line in brief.also],
+        "requests_waiting": len(brief.waiting),
+        "waiting_for_approval": [
+            {
+                "request": request.number,
+                "kind": request.kind,
+                "summary": request.summary,
+                "days_waiting": max(0, request.days),
+            }
+            for request in brief.waiting[: briefing.MOST_WAITING]
+        ],
+        "not_checked": list(brief.not_checked),
+        "note": "Requests are answered with approve or reject and the request number.",
+    }
+
+
 def _ceiling_table() -> CeilingTable | dict:
     """The ceiling prices on record, which may be none.
 
@@ -853,6 +891,7 @@ ANALYST_TOOLS = (
 )
 FORECASTER_TOOLS = (find_items, forecast_item, item_stock, order_suggestions)
 REPORTER_TOOLS = (
+    morning_brief,
     stock_health_summary,
     list_dead_stock,
     list_expiry_risks,
