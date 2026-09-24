@@ -115,9 +115,12 @@ def test_expired_stock_is_written_off_on_its_expiry_date():
         assert business.ledger.balance(m.batch, m.location_id) == 0
 
 
-def test_stockouts_are_recorded_as_unmet_demand():
+def test_stockouts_are_recorded_as_unmet_demand_day_by_day():
     business = small_business(days=40, cover_days=1, lead_time_days=(12, 14))
     assert sum(business.unmet_demand.values()) > 0
+    by_day = {item_id: sum(short.values()) for item_id, short in business.unmet_by_day.items()}
+    assert by_day == {item_id: units for item_id, units in business.unmet_demand.items() if units}
+    assert all(units > 0 for short in business.unmet_by_day.values() for units in short.values())
 
 
 def test_sundays_sell_far_fewer_units_than_weekdays(business):
@@ -210,3 +213,11 @@ def test_every_purchase_names_the_company_it_came_from(business):
     purchases = of_kind(business, MovementType.PURCHASE)
     assert purchases
     assert all(m.party_id == m.batch.company_id for m in purchases)
+
+
+def test_every_order_comes_in_whole_cases_of_the_item_s_size(business):
+    assert set(business.case_sizes) == {item.id for item in business.catalogue.items}
+    assert set(business.case_sizes.values()) <= {10, 25, 50}
+    lines = [line for order in business.orders for line in order.lines]
+    assert lines
+    assert all(line.quantity % business.case_sizes[line.item_id] == 0 for line in lines)

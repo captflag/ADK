@@ -104,6 +104,10 @@ class Business:
     batches: dict[BatchKey, Batch]
     unmet_demand: dict[str, int]
     """Units ordered but not supplied, by item id: the demand a stockout hides."""
+    unmet_by_day: dict[str, dict[date, int]] = field(default_factory=dict)
+    """The same, day by day, for the days an item went short: with sales, the true demand."""
+    case_sizes: dict[str, int] = field(default_factory=dict)
+    """Units in each item's shipping case; its company supplies whole cases only."""
     orders: tuple[PurchaseOrder, ...] = ()
     """Every purchase order placed with a company, earliest first."""
     order_of: dict[str, str] = field(default_factory=dict)
@@ -164,6 +168,7 @@ class _Simulation:
         self.expiring: defaultdict[date, list[BatchKey]] = defaultdict(list)
         self.return_due: defaultdict[date, list[BatchKey]] = defaultdict(list)
         self.unmet: defaultdict[str, int] = defaultdict(int)
+        self.unmet_by_day: defaultdict[str, dict[date, int]] = defaultdict(dict)
         self._next_movement = 1
         self._document_ids = count(1)
 
@@ -184,6 +189,8 @@ class _Simulation:
             ledger=self.ledger,
             batches=self.batches,
             unmet_demand=dict(self.unmet),
+            unmet_by_day=dict(self.unmet_by_day),
+            case_sizes=dict(self.case_size),
             orders=tuple(self.orders),
             order_of=self.order_of,
         )
@@ -314,6 +321,9 @@ class _Simulation:
             item = self.items[item_id]
             fill = min(size, self._sellable_units(item, today))
             self.unmet[item_id] += size - fill
+            if size > fill:
+                short = self.unmet_by_day[item_id]
+                short[today] = short.get(today, 0) + size - fill
             sold[item_id] += fill
             if fill == 0:
                 continue
