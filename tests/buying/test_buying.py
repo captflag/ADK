@@ -45,6 +45,8 @@ def item(item_id="I001", company_id="C01"):
 
 
 ITEMS = {"I001": item(), "I002": item("I002"), "I003": item("I003", "C02")}
+ONE_COVER = Policy(cover_days=21)
+"""One cover of 21 days for every item: 10.5 days of safety and 10.5 per order (ADR 0020)."""
 
 
 def bought(*entries, day=1):
@@ -64,7 +66,8 @@ def suggestions(ledger, rates, **kwargs):
 
 def test_an_item_below_its_reorder_point_is_ordered_up_to_its_cover():
     key = batch_key(item_id="I001", expiry=date(2027, 12, 31))
-    got = suggestions(bought((key, 30, "GODOWN", "12.50")), {"I001": 4.0})["I001"]
+    got = suggestions(bought((key, 30, "GODOWN", "12.50")), {"I001": 4.0}, policy=ONE_COVER)
+    got = got["I001"]
     # reorder point 4 x (4 + 10.5) = 58, order up to 4 x 25 = 100, position 30.
     assert (got.reorder_point, got.order_up_to, got.usable, got.quantity) == (58, 100, 30, 70)
     assert got.value == Decimal("875.00")
@@ -88,7 +91,7 @@ def test_stock_that_will_expire_unsold_held_or_off_the_shelf_does_not_count():
         (held, 40, "GODOWN", "10"),
         (later, 20, "RETURNS", "10"),
     )
-    got = suggestions(ledger, {"I001": 2.0}, held=[held])["I001"]
+    got = suggestions(ledger, {"I001": 2.0}, held=[held], policy=ONE_COVER)["I001"]
     # 10 days sell 20 of the 50 expiring soon; the held batch and the returns shelf are out.
     assert got.usable == 20
     assert got.quantity == 30  # below the reorder point of 29, so up to 50
@@ -120,6 +123,7 @@ def test_an_order_takes_one_companys_items_and_its_files_say_what_to_supply():
         [GODOWN],
         {"I001": 4.0, "I002": 1.0, "I003": 4.0},
         on=ON,
+        policy=ONE_COVER,
     )
     order = draft_order(got, company_id="C01", on=ON)
     assert order == PurchaseOrder(

@@ -533,6 +533,7 @@ def test_order_suggestions_total_what_needs_ordering_and_filter_by_company(stock
     assert everything["items_to_order"] > 0
     listed = everything["items"]
     assert all(entry["order_units"] > 0 for entry in listed)
+    assert all(len(entry["class"]) == 2 and entry["days_per_order"] > 0 for entry in listed)
     company = listed[0]["company_id"]
     one = tools.order_suggestions(company_id=company.lower(), limit=50)
     assert {entry["company_id"] for entry in one["items"]} == {company}

@@ -1,9 +1,10 @@
 """``batchward orders``: what to order, and purchase orders placed on approval (ADR 0020).
 
 ``orders suggest`` shows, company by company, what needs ordering to cover the
-forecast. ``orders draft`` drafts an order on one company and puts it up for
-approval (ADR 0005); only an approval places it. ``orders list`` shows orders
-placed and what each still waits for.
+forecast, each item to the cover of its ABC-XYZ class (ADR 0022) unless
+``--cover-days`` gives one cover for every item. ``orders draft`` drafts an
+order on one company and puts it up for approval (ADR 0005); only an approval
+places it. ``orders list`` shows orders placed and what each still waits for.
 """
 
 from __future__ import annotations
@@ -19,10 +20,11 @@ from pathlib import Path
 from batchward.agents import ordering
 from batchward.agents.data import DataUnavailableError
 from batchward.approvals_cli import request_approval
+from batchward.arguments import non_negative_int, positive_int
 from batchward.bridge.marg_contract import MargLayoutError
 from batchward.buying.order import OPEN_DAYS
 from batchward.buying.planning import open_orders, plan_for
-from batchward.buying.suggest import COVER_DAYS, LEAD_DAYS, Policy
+from batchward.buying.suggest import LEAD_DAYS, Policy
 from batchward.records.store import RecordsError, RecordStore
 from batchward.reporting.inr import format_inr
 from batchward.whatsapp_cli import notifier
@@ -69,10 +71,15 @@ def _plan(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--marg", type=Path, required=True, help="Marg database")
     parser.add_argument("--records", type=Path, required=True, help="Batchward records database")
     parser.add_argument(
-        "--cover-days", type=int, default=COVER_DAYS, help=f"days of demand to cover ({COVER_DAYS})"
+        "--cover-days",
+        type=positive_int,
+        help="one cover for every item, in days of demand (default: each item's by its class)",
     )
     parser.add_argument(
-        "--lead-days", type=int, default=LEAD_DAYS, help=f"days for stock to arrive ({LEAD_DAYS})"
+        "--lead-days",
+        type=non_negative_int,
+        default=LEAD_DAYS,
+        help=f"days for stock to arrive ({LEAD_DAYS})",
     )
 
 
@@ -81,8 +88,9 @@ def _policy(args: argparse.Namespace) -> Policy:
 
 
 def _suggest(args: argparse.Namespace) -> int:
+    policy = _policy(args)
     try:
-        planned = plan_for(args.marg, args.records, policy=_policy(args))
+        planned = plan_for(args.marg, args.records, policy=policy)
     except _FAILURES as error:
         return _fail(error)
     stock = planned.stock
@@ -96,9 +104,8 @@ def _suggest(args: argparse.Namespace) -> int:
         by_company[suggestion.item.company_id].append(suggestion)
     total = sum((s.value or Decimal(0) for s in wanted), Decimal(0))
     print(
-        f"To order on {stock.today:%d/%m/%Y}, covering {args.lead_days} days' lead time and "
-        f"{args.cover_days} days of demand: {len(wanted)} items from {len(by_company)} "
-        f"{'company' if len(by_company) == 1 else 'companies'}, about "
+        f"To order on {stock.today:%d/%m/%Y}, covering {policy}: {len(wanted)} items from "
+        f"{len(by_company)} {'company' if len(by_company) == 1 else 'companies'}, about "
         f"{format_inr(total, paise=True)} at last purchase rates."
     )
     for company_id, items in sorted(
@@ -119,13 +126,13 @@ def _suggest(args: argparse.Namespace) -> int:
     shown = wanted[: max(1, args.limit)]
     if shown:
         print(
-            f"\n  {'Company':<9}{'Product':<22}{'Per day':>8}{'Usable':>8}{'Due':>6}"
-            f"{'Order':>7}{'Value':>14}"
+            f"\n  {'Company':<9}{'Product':<22}{'Class':<6}{'Cover':>14}{'Per day':>8}"
+            f"{'Usable':>8}{'Due':>6}{'Order':>7}{'Value':>14}"
         )
         for s in shown:
             print(
-                f"  {s.item.company_id:<9}{s.item.brand[:21]:<22}{s.daily_rate:>8.1f}"
-                f"{s.usable:>8}{s.due:>6}{s.quantity:>7}"
+                f"  {s.item.company_id:<9}{s.item.brand[:21]:<22}{s.item_class or ''!s:<6}"
+                f"{s.cover!s:>14}{s.daily_rate:>8.1f}{s.usable:>8}{s.due:>6}{s.quantity:>7}"
                 f"{format_inr(s.value or Decimal(0), paise=True):>14}"
             )
     return 0

@@ -20,7 +20,7 @@ from pathlib import Path
 from batchward.agents.data import DataUnavailableError, load_marg
 from batchward.arguments import env_path, non_negative_int, positive_int
 from batchward.bridge.marg_contract import MargLayoutError
-from batchward.buying.suggest import COVER_DAYS, LEAD_DAYS, Policy
+from batchward.buying.suggest import LEAD_DAYS, Policy
 from batchward.channels.replies import ApproversFileError, load_approvers
 from batchward.channels.whatsapp import (
     Settings,
@@ -59,8 +59,7 @@ def add_brief_commands(commands: argparse._SubParsersAction) -> None:
     brief.add_argument(
         "--cover-days",
         type=positive_int,
-        default=COVER_DAYS,
-        help=f"days of demand an order covers ({COVER_DAYS})",
+        help="one cover for every item, in days of demand (default: each item's by its class)",
     )
     brief.add_argument(
         "--lead-days",

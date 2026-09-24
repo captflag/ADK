@@ -1,16 +1,18 @@
-"""What to order: each item topped up to cover its forecast demand (ADR 0020).
+"""What to order: each item topped up to cover its forecast demand (ADR 0020, 0022).
 
 An item's stock position is what will actually be there to sell: units on
 sellable shelves, less what the forecast says will expire before it sells and
 anything under a hold, plus what is still due on orders already placed. When
-the position falls below the demand expected over the lead time and half the
-cover, the item is ordered up to the demand over the lead time and the full
-cover:
+the position falls below the demand expected over the lead time and the
+item's safety days, the item is ordered up to the demand over the lead time,
+the safety and the days each order covers:
 
-    reorder point = rate x (lead days + cover days / 2)
-    order up to   = rate x (lead days + cover days)
+    reorder point = rate x (lead days + safety days)
+    order up to   = rate x (lead days + safety days + cycle days)
     order         = order up to - position, when position < reorder point
 
+Safety and cycle days come from the item's ABC-XYZ class (ADR 0022), or from
+one cover for every item when a policy names one: 21 days is 10.5 of each.
 The rate is the routed weekly forecast (ADR 0007) per day. An item that has not
 sold is never ordered. Quantities are units; companies that sell only whole
 cases need the order rounded up by a person, since Marg does not say the case
@@ -28,24 +30,47 @@ from decimal import Decimal
 
 from batchward.analysis.costs import PAISA
 from batchward.analysis.expiry import expiry_exposure
+from batchward.buying.cover import BY_CLASS, Cover, CoverTable, ItemClass, classify_items
 from batchward.core.clock import end_of_day
 from batchward.core.ledger import Ledger
 from batchward.core.models import BatchKey, Item, Location, MovementType
 
 COVER_DAYS = 21
-"""Days of demand an order tops stock up to, beyond the lead time."""
+"""Days of demand an order tops stock up to, beyond the lead time, under one cover for all."""
 LEAD_DAYS = 4
 """Days from placing an order to the stock arriving."""
 
 
 @dataclass(frozen=True, slots=True)
 class Policy:
-    cover_days: int = COVER_DAYS
+    cover_days: int | None = None
+    """One cover for every item, in days of demand beyond the lead time; None gives each
+    item the cover of its class from ``table``."""
     lead_days: int = LEAD_DAYS
+    table: CoverTable = BY_CLASS
 
     def __post_init__(self) -> None:
-        if self.cover_days < 1 or self.lead_days < 0:
+        if (self.cover_days is not None and self.cover_days < 1) or self.lead_days < 0:
             raise ValueError("cover must be at least a day, and lead time cannot be negative")
+
+    @property
+    def by_class(self) -> bool:
+        return self.cover_days is None
+
+    def cover(self, item_class: ItemClass | None) -> Cover:
+        if self.cover_days is not None:
+            return Cover.flat(self.cover_days)
+        if item_class is None:
+            raise ValueError("covering by class needs the item's class")
+        return self.table.cover(item_class)
+
+    def __str__(self) -> str:
+        cover = (
+            "each item's cover by its class"
+            if self.by_class
+            else f"{self.cover_days} days of demand"
+        )
+        return f"{self.lead_days} days' lead time and {cover}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +87,9 @@ class Suggestion:
     """Units to order; 0 when the position is enough."""
     rate: Decimal | None
     """The last rate the item was bought at, to value the order."""
+    cover: Cover
+    item_class: ItemClass | None = None
+    """The item's ABC-XYZ class, when its cover came from it."""
 
     @property
     def position(self) -> int:
@@ -101,9 +129,16 @@ def suggest(
     due: Mapping[str, int] | None = None,
     held: Iterable[BatchKey] = (),
     policy: Policy | None = None,
+    classes: Mapping[str, ItemClass] | None = None,
 ) -> list[Suggestion]:
-    """A suggestion for every item that sells, those to order first, by value."""
+    """A suggestion for every item that sells, those to order first, by value.
+
+    Covering by class, each item's class is worked out from the ledger unless
+    ``classes`` gives them.
+    """
     policy = policy or Policy()
+    if policy.by_class and classes is None:
+        classes = classify_items(ledger, on=on, items=daily_rates)
     locations = tuple(locations)
     sellable = {location.id for location in locations if location.sellable}
     held = set(held)
@@ -121,8 +156,10 @@ def suggest(
         item = items.get(item_id)
         if item is None or daily <= 0:
             continue
-        reorder_point = math.ceil(daily * (policy.lead_days + policy.cover_days / 2))
-        order_up_to = math.ceil(daily * (policy.lead_days + policy.cover_days))
+        item_class = classes.get(item_id) if policy.by_class and classes is not None else None
+        cover = policy.cover(item_class)
+        reorder_point = math.ceil(daily * (policy.lead_days + cover.safety_days))
+        order_up_to = math.ceil(daily * (policy.lead_days + cover.days))
         on_hand = max(0, usable[item_id])
         coming = (due or {}).get(item_id, 0)
         position = on_hand + coming
@@ -137,6 +174,8 @@ def suggest(
                 order_up_to=order_up_to,
                 quantity=quantity,
                 rate=rates.get(item_id),
+                cover=cover,
+                item_class=item_class,
             )
         )
     return sorted(

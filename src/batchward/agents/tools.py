@@ -25,7 +25,7 @@ from batchward.analysis.health import stock_health
 from batchward.analysis.routing import daily_rates, forecast_weekly
 from batchward.bridge.marg_layout import format_expiry
 from batchward.buying.order import OPEN_DAYS, OpenOrder, still_due
-from batchward.buying.suggest import COVER_DAYS, LEAD_DAYS, suggest
+from batchward.buying.suggest import LEAD_DAYS, suggest
 from batchward.claims.claim import settled
 from batchward.claims.submission import windows_for
 from batchward.claims.windows import CLOSING_DAYS, WindowState, lost_claims
@@ -664,10 +664,11 @@ def order_suggestions(company_id: str = "", limit: int = 10) -> dict:
     """What to order to cover the forecast: for each item that needs ordering, its forecast
     sales per day, the units usable (sellable, not held, and expected to sell before expiry),
     units still due on orders placed, the quantity to order and its value at the last purchase
-    rate, with totals by company. Orders cover 4 days' lead time and 21 days of demand. Pass a
-    company_id (like "C06") for one company, or leave it empty for all. Also lists orders more
-    than 30 days old with units never delivered. `limit` is how many items to list (at most 50).
-    Orders are placed only with a person's approval."""
+    rate, with totals by company. Orders allow 4 days' lead time, then each item's cover by its
+    ABC-XYZ class: safety days by how steady its demand is, and days per order by how much money
+    it carries. Pass a company_id (like "C06") for one company, or leave it empty for all.
+    Also lists orders more than 30 days old with units never delivered. `limit` is how many
+    items to list (at most 50). Orders are placed only with a person's approval."""
     data = current()
     path = records_path()
     placed: list[OpenOrder] = []
@@ -701,7 +702,7 @@ def order_suggestions(company_id: str = "", limit: int = 10) -> dict:
     return {
         "as_of": data.today.isoformat(),
         "lead_days": LEAD_DAYS,
-        "cover_days": COVER_DAYS,
+        "cover": "each item's by its ABC-XYZ class",
         "items_to_order": len(suggestions),
         "total_value": _paise(sum((s.value or Decimal(0) for s in suggestions), Decimal(0))),
         "companies": [
@@ -718,6 +719,9 @@ def order_suggestions(company_id: str = "", limit: int = 10) -> dict:
                 "due_on_orders": s.due,
                 "order_units": s.quantity,
                 "value": _paise(s.value or Decimal(0)),
+                "class": str(s.item_class) if s.item_class else None,
+                "safety_days": s.cover.safety_days,
+                "days_per_order": s.cover.cycle_days,
             }
             for s in suggestions[: _limit(limit)]
         ],
