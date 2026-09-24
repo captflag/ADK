@@ -56,6 +56,7 @@ def plan_for(
     with RecordStore(records, create=False) as store:
         orders = open_orders(store)
         holds = store.hold_log()
+        cases = store.case_table()
     held = {hold.batch for hold in holds if holds.release_of(hold.id) is None}
     due, overdue = still_due(orders, on=stock.today, open_days=OPEN_DAYS)
     suggestions = suggest(
@@ -67,6 +68,7 @@ def plan_for(
         due=due,
         held=held,
         policy=policy,
+        cases=cases,
     )
     order = posting = None
     if company_id is not None:

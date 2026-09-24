@@ -96,10 +96,13 @@ def test_demo_marg_with_force_replaces_old_records_even_with_no_recall_or_ceilin
     records.write_text("from an earlier run")
     args = ["--start", "2026-03-01", "--days", "2", "--chemists", "5", "--force"]
     assert main(["demo-marg", str(marg), *args, "--records", str(records)]) == 0
-    assert "Recorded return terms for 35 companies" in capsys.readouterr().out
+    printed = capsys.readouterr().out
+    assert "Recorded return terms for 35 companies" in printed
+    assert "Recorded case sizes for 511 products" in printed
     with RecordStore(records, create=False) as store:
         assert (store.notices(), store.ceiling_prices()) == ([], [])
         assert len(store.return_terms()) == 35
+        assert {size.units for size in store.case_sizes()} == {10, 25, 50}
 
 
 def test_demo_marg_seeds_no_price_rise_the_simulation_cannot_hold(tmp_path, capsys):
@@ -144,6 +147,11 @@ def test_cover_backtest_chooses_on_one_half_and_checks_on_the_other(capsys):
     assert "  Judged by ABC class and by XYZ class:" in printed
     assert main(["cover-backtest", "--days", "200"]) == 1
     assert "give at least 224" in capsys.readouterr().err
+    assert main(["cover-backtest", "--days", "250", "--cases", "nearest"]) == 0
+    printed = capsys.readouterr().out
+    assert "\nEvery order is rounded to the nearest whole number of cases, in the simulated" in (
+        printed
+    )
 
 
 def test_health_reports_stock_dead_stock_expiry_and_consumption(capsys):
@@ -866,6 +874,38 @@ def test_claims_from_windows_to_approval_to_credit_note(deliveries, tmp_path, ca
     assert "The claim is settled in full." in capsys.readouterr().out
     assert main(listing) == 0
     assert "No claims are waiting for credit." in capsys.readouterr().out
+
+
+def test_case_sizes_are_imported_listed_and_orders_come_in_whole_cases(
+    deliveries, tmp_path, capsys
+):
+    records, sizes = tmp_path / "rec.sqlite", tmp_path / "cases.csv"
+    shutil.copy(deliveries / "rec.sqlite", records)
+    sizes.write_text(
+        "Product code,Units per case,Effective from,Reference\n"
+        "C01-001,40,15/01/2026,Price list 2026\n",
+        encoding="utf-8",
+    )
+    command = ["orders", "cases", "import", str(sizes), "--records", str(records)]
+    capsys.readouterr()
+    assert main(command) == 0
+    assert "Recorded 1 of 1 case sizes; 0 already recorded." in capsys.readouterr().out
+    assert main(["orders", "cases", "list", "--records", str(records)]) == 0
+    assert "C01-001         40  15/01/2026  Price list 2026" in capsys.readouterr().out
+    sizes.write_text("Product code,Units per case\nC01-001,40\n", encoding="utf-8")
+    assert main(command) == 1
+    assert "no column Effective from, Reference" in capsys.readouterr().err
+
+    stock = ["--marg", str(deliveries / "marg.sqlite"), "--records", str(records)]
+    assert main(["orders", "suggest", *stock, "--limit", "50"]) == 0
+    printed = capsys.readouterr().out
+    assert " x " in printed.split("Cases", 1)[1]
+    wanted = [s for s in plan_for(deliveries / "marg.sqlite", records).suggestions if s.quantity]
+    assert wanted and all(s.quantity % s.case_units == 0 for s in wanted)
+    empty = tmp_path / "empty.sqlite"
+    RecordStore(empty).close()
+    assert main(["orders", "cases", "list", "--records", str(empty)]) == 0
+    assert "No case sizes are recorded; orders are in units." in capsys.readouterr().out
 
 
 def test_claims_terms_are_imported_and_listed(tmp_path, capsys):

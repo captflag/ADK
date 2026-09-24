@@ -26,7 +26,11 @@ from batchward.reporting.inr import format_inr
 KIND = "purchase order"
 OPEN_DAYS = 30
 """How long an order's undelivered units are still counted as coming."""
-ORDER_COLUMNS = ("ORDER NO", "DATE", "PRODUCT CODE", "PRODUCT", "PACK", "QTY", "RATE", "VALUE")
+ORDER_COLUMNS = (
+    "ORDER NO", "DATE", "PRODUCT CODE", "PRODUCT", "PACK", "QTY", "RATE", "VALUE", "CASES",
+    "UNITS PER CASE",
+)  # fmt: skip
+"""The order sheet's columns; the case columns are blank for a product with no case size."""
 
 
 def order_number(company_id: str, on: date) -> str:
@@ -89,6 +93,7 @@ def _sheet(order: PurchaseOrder, suggestions: Mapping[str, Suggestion]) -> str:
     for line in order.lines:
         item = suggestions[line.item_id].item
         rate = suggestions[line.item_id].rate
+        case = suggestions[line.item_id].case_units
         value = _value(line, suggestions)
         writer.writerow(
             (
@@ -100,6 +105,8 @@ def _sheet(order: PurchaseOrder, suggestions: Mapping[str, Suggestion]) -> str:
                 line.quantity,
                 "" if rate is None else f"{rate:.2f}",
                 "" if value is None else f"{value:.2f}",
+                "" if case is None else line.quantity // case,
+                "" if case is None else case,
             )
         )
     return out.getvalue()
@@ -116,7 +123,14 @@ def _message(
     ]
     for line in order.lines:
         item = suggestions[line.item_id].item
-        lines.append(f"  {item.brand} ({item.unit}): {line.quantity}")
+        case = suggestions[line.item_id].case_units
+        cases = (
+            ""
+            if case is None
+            else f", {line.quantity // case} {'case' if line.quantity == case else 'cases'} "
+            f"of {case}"
+        )
+        lines.append(f"  {item.brand} ({item.unit}): {line.quantity}{cases}")
     lines += [
         "",
         f"About {format_inr(total, paise=True)} at our last purchase rates.",

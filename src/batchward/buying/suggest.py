@@ -14,9 +14,8 @@ the safety and the days each order covers:
 Safety and cycle days come from the item's ABC-XYZ class (ADR 0022), or from
 one cover for every item when a policy names one: 21 days is 10.5 of each.
 The rate is the routed weekly forecast (ADR 0007) per day. An item that has not
-sold is never ordered. Quantities are units; companies that sell only whole
-cases need the order rounded up by a person, since Marg does not say the case
-size.
+sold is never ordered. An order is rounded up to whole cases when the item's
+case size is on record (ADR 0023), and is in units otherwise.
 """
 
 from __future__ import annotations
@@ -30,6 +29,7 @@ from decimal import Decimal
 
 from batchward.analysis.costs import PAISA
 from batchward.analysis.expiry import expiry_exposure
+from batchward.buying.cases import SLOW_CASE_DAYS, CaseTable, to_cases
 from batchward.buying.cover import BY_CLASS, Cover, CoverTable, ItemClass, classify_items
 from batchward.core.clock import end_of_day
 from batchward.core.ledger import Ledger
@@ -90,6 +90,10 @@ class Suggestion:
     cover: Cover
     item_class: ItemClass | None = None
     """The item's ABC-XYZ class, when its cover came from it."""
+    case_units: int | None = None
+    """Units in the item's case, when on record: the order is in whole cases of it."""
+    needed: int = 0
+    """Units the cover asked for, before rounding to whole cases."""
 
     @property
     def position(self) -> int:
@@ -98,6 +102,22 @@ class Suggestion:
     @property
     def value(self) -> Decimal | None:
         return None if self.rate is None else (self.rate * self.quantity).quantize(PAISA)
+
+    @property
+    def cases(self) -> int | None:
+        return None if self.case_units is None else self.quantity // self.case_units
+
+    @property
+    def case_days(self) -> float | None:
+        """How many days of forecast demand one case holds."""
+        if self.case_units is None or self.daily_rate <= 0:
+            return None
+        return self.case_units / self.daily_rate
+
+    @property
+    def slow_case(self) -> bool:
+        """Whether one case holds more than a quarter's demand, and may not sell in time."""
+        return self.quantity > 0 and (self.case_days or 0) > SLOW_CASE_DAYS
 
     @property
     def days_of_cover(self) -> float | None:
@@ -130,11 +150,13 @@ def suggest(
     held: Iterable[BatchKey] = (),
     policy: Policy | None = None,
     classes: Mapping[str, ItemClass] | None = None,
+    cases: CaseTable | None = None,
 ) -> list[Suggestion]:
     """A suggestion for every item that sells, those to order first, by value.
 
     Covering by class, each item's class is worked out from the ledger unless
-    ``classes`` gives them.
+    ``classes`` gives them. An item with a case size in ``cases`` on the day is
+    ordered in whole cases, rounded up.
     """
     policy = policy or Policy()
     if policy.by_class and classes is None:
@@ -163,7 +185,10 @@ def suggest(
         on_hand = max(0, usable[item_id])
         coming = (due or {}).get(item_id, 0)
         position = on_hand + coming
-        quantity = order_up_to - position if position < reorder_point else 0
+        needed = order_up_to - position if position < reorder_point else 0
+        size = None if cases is None else cases.in_force(item_id, on)
+        case_units = None if size is None else size.units
+        quantity = needed if case_units is None else to_cases(needed, case_units)
         suggestions.append(
             Suggestion(
                 item=item,
@@ -176,6 +201,8 @@ def suggest(
                 rate=rates.get(item_id),
                 cover=cover,
                 item_class=item_class,
+                case_units=case_units,
+                needed=needed,
             )
         )
     return sorted(

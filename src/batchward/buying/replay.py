@@ -16,8 +16,9 @@ percent), judged for each ABC class and each XYZ class, with no more order
 lines in all. Choosing on one stretch of demand and checking on the next shows
 whether the choice holds.
 
-The replay leaves out what it cannot see: expiry (holding more of a slow mover
-risks more of it expiring), case sizes, and the days a company takes orders.
+Orders can be rounded to whole cases, up or to the nearest (ADR 0023). The
+replay leaves out what it cannot see: expiry (holding more of a slow mover
+risks more of it expiring) and the days a company takes orders.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from decimal import Decimal
 from batchward.analysis.classification import ValueClass, VariabilityClass
 from batchward.analysis.demand import aggregate
 from batchward.analysis.routing import forecast_weekly
+from batchward.buying.cases import Rounding, to_cases
 from batchward.buying.cover import Cover, CoverTable, ItemClass, classify
 from batchward.buying.suggest import COVER_DAYS, LEAD_DAYS
 
@@ -99,10 +101,13 @@ def replay(
     took: Sequence[int],
     lead_days: int = LEAD_DAYS,
     cost: float = 0.0,
+    case: int = 1,
+    rounding: Rounding = Rounding.UP,
 ) -> Result:
     """One item under one cover from day ``start`` to ``end``.
 
     ``took[d]`` is how many days an order placed on day ``d`` took to arrive.
+    Each order is rounded to whole cases of ``case`` units by ``rounding``.
     Stock starts halfway through an order's cover, as it would part way through
     the rule's cycle, and the first days are left out of the result.
     """
@@ -118,7 +123,8 @@ def replay(
         on_order -= arrived
         rate = rates[day]
         if rate > 0 and on_hand + on_order < rate * (lead_days + cover.safety_days):
-            quantity = math.ceil(rate * (lead_days + cover.days)) - on_hand - on_order
+            needed = math.ceil(rate * (lead_days + cover.days)) - on_hand - on_order
+            quantity = to_cases(needed, case, rounding)
             if quantity > 0:
                 arriving[day + took[day]] += quantity
                 on_order += quantity
@@ -171,8 +177,13 @@ def replay_grid(
     took: Sequence[int],
     covers: Iterable[Cover],
     lead_days: int = LEAD_DAYS,
+    cases: Mapping[str, int] | None = None,
+    rounding: Rounding = Rounding.UP,
 ) -> Grid:
-    """Every cover replayed on every item that sold before the stretch, added up by class."""
+    """Every cover replayed on every item that sold before the stretch, added up by class.
+
+    With ``cases``, each item's orders are rounded to its whole cases by ``rounding``.
+    """
     covers = sorted(set(covers))
     grid: Grid = {}
     for item_id, series in demand.items():
@@ -191,6 +202,8 @@ def replay_grid(
                 took=took,
                 lead_days=lead_days,
                 cost=cost,
+                case=(cases or {}).get(item_id, 1),
+                rounding=rounding,
             )
             row[cover] = row.get(cover, Result()) + result
     return grid

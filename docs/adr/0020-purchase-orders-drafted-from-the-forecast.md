@@ -67,3 +67,8 @@ One cover for every item is no longer the default. Each item is ordered to the
 cover of its ABC-XYZ class, safety days by XYZ and days per order by ABC,
 chosen by replaying simulated demand (ADR 0022). `--cover-days` still orders
 every item to one cover.
+
+## Amendment, 2026-09-22: whole cases
+
+Quantities are now rounded up to whole cases where a product's case size is on
+record in Batchward's records, and stay in units where it is not (ADR 0023).

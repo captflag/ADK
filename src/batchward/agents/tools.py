@@ -666,18 +666,22 @@ def order_suggestions(company_id: str = "", limit: int = 10) -> dict:
     units still due on orders placed, the quantity to order and its value at the last purchase
     rate, with totals by company. Orders allow 4 days' lead time, then each item's cover by its
     ABC-XYZ class: safety days by how steady its demand is, and days per order by how much money
-    it carries. Pass a company_id (like "C06") for one company, or leave it empty for all.
-    Also lists orders more than 30 days old with units never delivered. `limit` is how many
-    items to list (at most 50). Orders are placed only with a person's approval."""
+    it carries. Orders are rounded up to whole cases where the case size is on record; a case
+    lasting more than 90 days of demand may not sell before it expires. Pass a company_id (like
+    "C06") for one company, or leave it empty for all. Also lists orders more than 30 days old
+    with units never delivered. `limit` is how many items to list (at most 50). Orders are
+    placed only with a person's approval."""
     data = current()
     path = records_path()
     placed: list[OpenOrder] = []
     held: set = set()
+    cases = None
     if path is not None and path.is_file():
         try:
             with RecordStore(path, create=False) as store:
                 placed = [OpenOrder(o, store.received_against(o.number)) for o in store.orders()]
                 log = store.hold_log()
+                cases = store.case_table()
             held = {hold.batch for hold in log if log.release_of(hold.id) is None}
         except (RecordsError, sqlite3.Error, ValueError) as error:
             return {"error": f"the orders on record cannot be read: {error}"}
@@ -692,6 +696,7 @@ def order_suggestions(company_id: str = "", limit: int = 10) -> dict:
             on=data.today,
             due=due,
             held=held,
+            cases=cases,
         )
         if s.quantity > 0 and (not company_id or s.item.company_id == company_id.strip().upper())
     ]
@@ -722,6 +727,9 @@ def order_suggestions(company_id: str = "", limit: int = 10) -> dict:
                 "class": str(s.item_class) if s.item_class else None,
                 "safety_days": s.cover.safety_days,
                 "days_per_order": s.cover.cycle_days,
+                "units_per_case": s.case_units,
+                "cases": s.cases,
+                "one_case_lasts_days": None if s.case_days is None else round(s.case_days),
             }
             for s in suggestions[: _limit(limit)]
         ],

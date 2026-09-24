@@ -19,6 +19,7 @@ from batchward.arguments import non_negative_int, positive_int
 from batchward.bridge.marg_export import export_to_marg
 from batchward.bridge.marg_layout import format_expiry
 from batchward.brief_cli import add_brief_commands
+from batchward.buying.cases import CaseSize
 from batchward.claims_cli import add_claims_commands
 from batchward.cover_cli import add_cover_commands
 from batchward.intake_cli import add_intake_commands
@@ -256,6 +257,12 @@ def _demo_marg(args: argparse.Namespace) -> int:
             with store.transaction():
                 saved = sum(store.save_terms(entry) for entry in terms)
             print(f"  Recorded return terms for {saved} companies")
+            with store.transaction():
+                saved = sum(
+                    store.save_case_size(CaseSize(item_id, units, args.start, "Simulated packing"))
+                    for item_id, units in sorted(business.case_sizes.items())
+                )
+            print(f"  Recorded case sizes for {saved} products")
     return 0
 
 

@@ -4,7 +4,8 @@ The simulated stockist's demand is known in full: what was sold and what went
 short. Replaying it under every cover in a grid, the first half of the days
 after the forecast's 26 weeks of history chooses a table of covers by class
 (ADR 0022), and the second half checks it against one cover of 21 days, and
-against the table Batchward orders to.
+against the table Batchward orders to. With ``--cases``, every order is rounded
+to the simulated companies' whole cases, up or to the nearest (ADR 0023).
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from decimal import Decimal
 
 from batchward.analysis.demand import daily_sales
 from batchward.arguments import positive_int
+from batchward.buying.cases import Rounding
 from batchward.buying.cover import BY_CLASS, CoverTable
 from batchward.buying.replay import (
     FLAT,
@@ -40,6 +42,10 @@ from batchward.reporting.inr import format_inr
 from batchward.sim.business import SimConfig, simulate
 
 _HISTORY = HISTORY_WEEKS * 7
+_ROUNDED = {
+    Rounding.UP: "up to whole cases",
+    Rounding.NEAREST: "to the nearest whole number of cases",
+}
 
 
 def add_cover_commands(commands: argparse._SubParsersAction) -> None:
@@ -50,6 +56,12 @@ def add_cover_commands(commands: argparse._SubParsersAction) -> None:
     cover.add_argument("--start", type=date.fromisoformat, default=date(2024, 9, 2))
     cover.add_argument("--days", type=positive_int, default=728)
     cover.add_argument("--seed", type=int, default=42)
+    cover.add_argument(
+        "--cases",
+        type=Rounding,
+        choices=list(Rounding),
+        help="round every order to the simulated whole cases, up or to the nearest",
+    )
     cover.set_defaults(handler=_cover_backtest)
 
 
@@ -80,8 +92,9 @@ def _cover_backtest(args: argparse.Namespace) -> int:
     chosen_on = stretch(demand, costs, start=_HISTORY, end=middle)
     checked_on = stretch(demand, costs, start=middle, end=args.days)
     covers = grid_covers()
-    first = replay_grid(demand, costs, chosen_on, took=took, covers=covers)
-    second = replay_grid(demand, costs, checked_on, took=took, covers=covers)
+    rounded = {} if args.cases is None else {"cases": business.case_sizes, "rounding": args.cases}
+    first = replay_grid(demand, costs, chosen_on, took=took, covers=covers, **rounded)
+    second = replay_grid(demand, costs, checked_on, took=took, covers=covers, **rounded)
     table = choose(first)
 
     low, high = config.lead_time_days
@@ -90,6 +103,8 @@ def _cover_backtest(args: argparse.Namespace) -> int:
         f"{len(items)} items, demand as chemists asked for it, orders arriving in "
         f"{low} to {high} days."
     )
+    if args.cases is not None:
+        print(f"Every order is rounded {_ROUNDED[args.cases]}, in the simulated case sizes.")
     print(f"Chosen: {table}")
     if table == BY_CLASS:
         print("This is the table Batchward orders to (ADR 0022).")

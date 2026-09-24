@@ -107,7 +107,10 @@ business data. What exists so far:
   by replaying two simulated years of demand; checked on months it was not
   chosen on, it held about 28% less stock than one cover for every item, at the
   same fill rate and with fewer order lines
-  ([ADR 0022](docs/adr/0022-cover-by-abc-xyz-class.md)).
+  ([ADR 0022](docs/adr/0022-cover-by-abc-xyz-class.md)). Orders are rounded up
+  to whole cases from case sizes kept in the records, and a case holding more
+  than 90 days' demand is pointed out
+  ([ADR 0023](docs/adr/0023-orders-rounded-up-to-whole-cases.md)).
 - **Expiry claims**: each company's return terms are dated records. Stock the
   forecast says will not sell before expiry is valued at what its company would
   credit, window by window: open now, closing within 15 days, or already lost to
@@ -194,7 +197,9 @@ approval writes the Marg purchase voucher and any debit note. `--approve-by
 shows what to order from each company, with each item's class and cover;
 `orders draft <company> ... --out <folder>` puts an order up for approval, and
 `orders list` shows what each order placed still waits for. `--cover-days 21`
-orders every item to one cover instead.
+orders every item to one cover instead. `orders cases import <cases.csv>`
+records how many units each product's case holds (the demo records the
+simulated ones), and `orders cases list` shows them.
 
 `batchward claims windows --marg sim-out/marg.sqlite --records
 sim-out/records.sqlite` shows what can be claimed from companies now, what closes

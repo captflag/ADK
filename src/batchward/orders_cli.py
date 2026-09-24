@@ -2,9 +2,12 @@
 
 ``orders suggest`` shows, company by company, what needs ordering to cover the
 forecast, each item to the cover of its ABC-XYZ class (ADR 0022) unless
-``--cover-days`` gives one cover for every item. ``orders draft`` drafts an
+``--cover-days`` gives one cover for every item. Orders are rounded up to whole
+cases where the case size is on record (ADR 0023). ``orders draft`` drafts an
 order on one company and puts it up for approval (ADR 0005); only an approval
-places it. ``orders list`` shows orders placed and what each still waits for.
+places it.
+``orders list`` shows orders placed and what each still waits for, and ``orders
+cases`` records and lists how many units each product's case holds.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from batchward.agents.data import DataUnavailableError
 from batchward.approvals_cli import request_approval
 from batchward.arguments import non_negative_int, positive_int
 from batchward.bridge.marg_contract import MargLayoutError
+from batchward.buying.cases import SLOW_CASE_DAYS, CaseSizesFileError, read_case_sizes
 from batchward.buying.order import OPEN_DAYS
 from batchward.buying.planning import open_orders, plan_for
 from batchward.buying.suggest import LEAD_DAYS, Policy
@@ -65,6 +69,16 @@ def add_orders_commands(commands: argparse._SubParsersAction) -> None:
     listing.add_argument("--all", action="store_true", help="orders received in full too")
     listing.add_argument("--on", type=date.fromisoformat, help="the day to age orders to")
     listing.set_defaults(handler=_list)
+
+    cases = actions.add_parser("cases", help="how many units each product's case holds")
+    case_actions = cases.add_subparsers(dest="cases_command", required=True)
+    load = case_actions.add_parser("import", help="record case sizes from a CSV file")
+    load.add_argument("file", type=Path, help="CSV: product code, units per case, from, ref")
+    load.add_argument("--records", type=Path, required=True, help="Batchward records database")
+    load.set_defaults(handler=_import_cases)
+    shown = case_actions.add_parser("list", help="the case sizes recorded")
+    shown.add_argument("--records", type=Path, required=True, help="Batchward records database")
+    shown.set_defaults(handler=_list_cases)
 
 
 def _plan(parser: argparse.ArgumentParser) -> None:
@@ -127,14 +141,23 @@ def _suggest(args: argparse.Namespace) -> int:
     if shown:
         print(
             f"\n  {'Company':<9}{'Product':<22}{'Class':<6}{'Cover':>14}{'Per day':>8}"
-            f"{'Usable':>8}{'Due':>6}{'Order':>7}{'Value':>14}"
+            f"{'Usable':>8}{'Due':>6}{'Order':>7}{'Cases':>10}{'Value':>14}"
         )
         for s in shown:
+            cases = "" if s.case_units is None else f"{s.cases} x {s.case_units}"
             print(
                 f"  {s.item.company_id:<9}{s.item.brand[:21]:<22}{s.item_class or ''!s:<6}"
                 f"{s.cover!s:>14}{s.daily_rate:>8.1f}{s.usable:>8}{s.due:>6}{s.quantity:>7}"
-                f"{format_inr(s.value or Decimal(0), paise=True):>14}"
+                f"{cases:>10}{format_inr(s.value or Decimal(0), paise=True):>14}"
             )
+    slow = [s for s in wanted if s.slow_case]
+    if slow:
+        print(
+            f"\nOne case holds more than {SLOW_CASE_DAYS} days' demand of these; check the "
+            "stock will sell before it expires:"
+        )
+        for s in slow:
+            print(f"  {s.item.company_id:<9}{s.item.brand[:21]:<22}{s.case_days:>6.0f} days a case")
     return 0
 
 
@@ -188,6 +211,35 @@ def _list(args: argparse.Namespace) -> int:
         print(
             f"  {order.number:<17}{order.company_id:<9}{order.placed_on:%d/%m/%Y} "
             f"{open_order.age(on):>5}{ordered:>9}{due:>7}{late}"
+        )
+    return 0
+
+
+def _import_cases(args: argparse.Namespace) -> int:
+    try:
+        with args.file.open(encoding="utf-8-sig", newline="") as lines:
+            sizes = read_case_sizes(lines)
+        with RecordStore(args.records) as store, store.transaction():
+            saved = sum(store.save_case_size(size) for size in sizes)
+    except (CaseSizesFileError, *_FAILURES) as error:
+        return _fail(error)
+    print(f"Recorded {saved} of {len(sizes)} case sizes; {len(sizes) - saved} already recorded.")
+    return 0
+
+
+def _list_cases(args: argparse.Namespace) -> int:
+    try:
+        with RecordStore(args.records, create=False) as store:
+            sizes = store.case_sizes()
+    except _FAILURES as error:
+        return _fail(error)
+    if not sizes:
+        print("No case sizes are recorded; orders are in units. Import them with `orders cases`.")
+        return 0
+    print(f"  {'Product':<12}{'Units':>6}  From        Reference")
+    for size in sizes:
+        print(
+            f"  {size.item_id:<12}{size.units:>6}  {size.effective_from:%d/%m/%Y}  {size.reference}"
         )
     return 0
 

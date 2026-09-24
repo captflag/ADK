@@ -102,3 +102,9 @@ what it would have served, held and ordered.
 - **Safety from each item's own demand variance.** The formula assumes
   normally distributed demand and a known lead time, neither of which pharma
   distribution gives; days by class can be read, checked and replayed.
+
+## Amendment, 2026-09-22: whole cases
+
+Orders are now rounded up to whole cases (ADR 0023). Replayed that way, this
+table still holds 22% to 25% less stock than one cover at the same fill, but
+places 5% to 7% more order lines; ADR 0023 keeps it and says why.

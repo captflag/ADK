@@ -35,6 +35,7 @@ from batchward.analysis.ageing import dead_stock
 from batchward.analysis.costs import batch_costs
 from batchward.analysis.expiry import expiry_exposure
 from batchward.analysis.routing import daily_rates
+from batchward.buying.cases import CaseTable
 from batchward.buying.order import OPEN_DAYS, OpenOrder, still_due
 from batchward.buying.planning import open_orders
 from batchward.buying.suggest import Policy, last_rates, suggest
@@ -177,11 +178,13 @@ def morning_brief(
             "recalls, claims, orders placed and approvals, as no records database was given"
         )
         ceilings, windows, orders, held, claims, credited = CeilingTable(), None, [], set(), [], {}
+        cases = CaseTable()
     else:
         ceilings = store.ceiling_table()
         log = store.hold_log()
         held = {hold.batch for hold in log if log.release_of(hold.id) is None}
         orders = open_orders(store)
+        cases = store.case_table()
         claims = store.claims()
         credited = defaultdict(list)
         for settlement in store.settlements():
@@ -196,7 +199,7 @@ def morning_brief(
     lines += [
         _prices(stock, ceilings, costs, on_hand),
         _claims_closing(stock, windows),
-        _orders(stock, rates, orders, held, policy),
+        _orders(stock, rates, orders, held, policy, cases),
         _credit_owed(stock, claims, credited),
         _expiry(stock, costs, rates, windows),
         _dead_stock(stock, costs),
@@ -340,6 +343,7 @@ def _orders(
     orders: list[OpenOrder],
     held: set,
     policy: Policy | None,
+    cases: CaseTable,
 ) -> Line | None:
     due, overdue = still_due(orders, on=stock.today)
     wanted = [
@@ -353,6 +357,7 @@ def _orders(
             due=due,
             held=held,
             policy=policy,
+            cases=cases,
         )
         if s.quantity > 0
     ]
