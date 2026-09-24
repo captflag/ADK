@@ -60,3 +60,10 @@ orders they fill (ADR 0016, 0017). It did not say what to order.
   would block the item from being ordered again forever.
 - **Placing orders without approval.** An order commits money; it is a draft
   until a person says yes (ADR 0005).
+
+## Amendment, 2026-09-22: cover by class
+
+One cover for every item is no longer the default. Each item is ordered to the
+cover of its ABC-XYZ class, safety days by XYZ and days per order by ABC,
+chosen by replaying simulated demand (ADR 0022). `--cover-days` still orders
+every item to one cover.

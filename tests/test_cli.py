@@ -133,6 +133,19 @@ def test_backtest_refuses_a_run_too_short_to_forecast(capsys):
     assert "at least 27 are needed" in capsys.readouterr().err
 
 
+def test_cover_backtest_chooses_on_one_half_and_checks_on_the_other(capsys):
+    assert main(["cover-backtest", "--days", "250"]) == 0
+    printed = capsys.readouterr().out
+    assert printed.startswith("Cover backtest: 250 days from 2024-09-02, seed 42; 511 items,")
+    assert "\nChosen: safety days X " in printed
+    assert "\nChosen on 03/03/2025 to 05/04/2025\n" in printed
+    assert "\nChecked on 06/04/2025 to 09/05/2025\n" in printed
+    assert "one cover of 21 days" in printed
+    assert "  Judged by ABC class and by XYZ class:" in printed
+    assert main(["cover-backtest", "--days", "200"]) == 1
+    assert "give at least 224" in capsys.readouterr().err
+
+
 def test_health_reports_stock_dead_stock_expiry_and_consumption(capsys):
     assert main(["health", "--days", "120", "--top", "3"]) == 0
     printed = capsys.readouterr().out

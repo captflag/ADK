@@ -27,3 +27,4 @@ record that supersedes the old one.
 | [0019](0019-approvals-on-whatsapp.md) | Approvals are answered on WhatsApp by approvers known by phone number | Accepted |
 | [0020](0020-purchase-orders-drafted-from-the-forecast.md) | Purchase orders are drafted from the forecast and placed only on approval | Accepted |
 | [0021](0021-morning-brief-worked-out-in-python.md) | The morning brief is worked out in Python and sent on WhatsApp | Accepted |
+| [0022](0022-cover-by-abc-xyz-class.md) | Each item's cover follows its ABC-XYZ class, as a replay of demand chose | Accepted |

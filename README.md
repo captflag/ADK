@@ -102,6 +102,12 @@ business data. What exists so far:
   on orders already placed. An order is drafted per company, placed only on
   approval, and recorded, so deliveries are matched against it by the number
   they quote ([ADR 0020](docs/adr/0020-purchase-orders-drafted-from-the-forecast.md)).
+  Each item's cover follows its ABC-XYZ class: safety days by how steady its
+  demand is, days per order by how much money it carries. The table was chosen
+  by replaying two simulated years of demand; checked on months it was not
+  chosen on, it held about 28% less stock than one cover for every item, at the
+  same fill rate and with fewer order lines
+  ([ADR 0022](docs/adr/0022-cover-by-abc-xyz-class.md)).
 - **Expiry claims**: each company's return terms are dated records. Stock the
   forecast says will not sell before expiry is valued at what its company would
   credit, window by window: open now, closing within 15 days, or already lost to
@@ -141,6 +147,7 @@ brands' printed MRPs, and each simulated company's return terms for expiring sto
 ```bash
 uv run batchward health        # stock value, ageing, dead stock and expiry risk
 uv run batchward backtest      # how each forecasting method scores, by demand pattern
+uv run batchward cover-backtest  # choose each class's cover by replaying demand, and check it
 uv run batchward recall-drill  # block recalled batch AZ4021, reconcile returns, print the report
 uv run batchward price-guard   # a lowered ceiling, a 10% price rise, and the exposure they create
 ```
@@ -184,9 +191,10 @@ approval writes the Marg purchase voucher and any debit note. `--approve-by
 <name>` approves at once.
 
 `batchward orders suggest --marg sim-out/marg.sqlite --records sim-out/records.sqlite`
-shows what to order from each company; `orders draft <company> ... --out <folder>`
-puts an order up for approval, and `orders list` shows what each order placed
-still waits for.
+shows what to order from each company, with each item's class and cover;
+`orders draft <company> ... --out <folder>` puts an order up for approval, and
+`orders list` shows what each order placed still waits for. `--cover-days 21`
+orders every item to one cover instead.
 
 `batchward claims windows --marg sim-out/marg.sqlite --records
 sim-out/records.sqlite` shows what can be claimed from companies now, what closes
