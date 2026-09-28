@@ -22,6 +22,7 @@ from batchward.core.models import MovementType, StockMovement
 from batchward.core.orders import PurchaseOrder
 from batchward.core.trace import trace_batch
 from batchward.records.store import RecordStore
+from pdf_documents import Printed, lay_out, write_pdf
 
 COVERS_RECALL = ["--start", "2026-01-01", "--days", "45", "--chemists", "40"]
 
@@ -1172,3 +1173,72 @@ def test_intake_receive_finds_the_order_an_invoice_quotes_in_the_records(
     assert main([*without_order, "--count", count]) == 0
     printed = capsys.readouterr().out
     assert f"Matched against order {order.number}." in printed and "Ready to post." in printed
+
+
+PRINTED_COLUMNS = [40.0, 80.0, 250.0, 380.0, 470.0]
+PRINTED_HEADING = [
+    ["Sl. No.", "Name of the", "Dosage form &", "Unit", "Ceiling Price"],
+    ["", "Scheduled Formulation", "Strength", "", "(Rs.)"],
+]
+PRINTED_ROWS = [
+    [["1."], ["Atorvastatin"], ["Tablet 10 mg"], ["1 Tablet"], ["6.42"]],
+    [["2."], ["Insulin glargine"], ["Injection 100 IU/ml"], ["1 ml"], ["86.00"]],
+    [["3."], ["Ibuprofen"], ["Tablet 400 mg"], ["1 Tablet"], ["1.07"]],
+]
+
+
+def notification_pdf(path):
+    """An NPPA notification as published: a heading, a gazette line, and the table."""
+    gazette = Printed(150.0, 40.0, "MINISTRY OF CHEMICALS AND FERTILIZERS", 11.0)
+    pieces = lay_out(PRINTED_COLUMNS, PRINTED_HEADING, PRINTED_ROWS)
+    path.write_bytes(write_pdf([[gazette, *pieces]]))
+    return path
+
+
+def test_pdf_table_prints_the_table_for_a_person_to_check(tmp_path, demo, capsys):
+    published = notification_pdf(tmp_path / "so-1234.pdf")
+    assert main(["pdf", "table", str(published), "--for", "nppa"]) == 0
+    printed = capsys.readouterr().out
+    assert printed.splitlines()[0] == (
+        "Sl. No.,Name of the Scheduled Formulation,Dosage form & Strength,Unit,Ceiling Price (Rs.)"
+    )
+    assert "1.,Atorvastatin,Tablet 10 mg,1 Tablet,6.42" in printed
+
+    table = tmp_path / "table.csv"
+    assert main(["pdf", "table", str(published), "--for", "nppa", "--out", str(table)]) == 0
+    assert "Written to" in capsys.readouterr().out
+    # What was written is what the importer takes.
+    imported = [
+        "ceilings", "import", "--records", str(tmp_path / "records.sqlite"), "--marg", demo[1],
+        "--csv", str(table), "--notification", "S.O. 1234(E)", "--effective", "2026-10-01",
+    ]  # fmt: skip
+    assert main(imported) == 0
+    assert "Recorded 1 ceiling prices" in capsys.readouterr().out
+
+
+def test_pdf_text_prints_the_text_layer_and_where_it_sits(tmp_path, capsys):
+    published = notification_pdf(tmp_path / "so-1234.pdf")
+    assert main(["pdf", "text", str(published), "--page", "1"]) == 0
+    printed = capsys.readouterr().out
+    assert "Page 1 (595 x 842 points)" in printed
+    assert "  MINISTRY OF CHEMICALS AND FERTILIZERS" in printed
+    assert "  1. Atorvastatin Tablet 10 mg 1 Tablet 6.42" in printed
+
+    assert main(["pdf", "text", str(published), "--places"]) == 0
+    assert "x=  470.0 y=  146.0   9.0pt  1.07" in capsys.readouterr().out
+
+
+def test_pdf_says_what_it_could_not_read(tmp_path, capsys):
+    scan = tmp_path / "scan.pdf"
+    scan.write_bytes(write_pdf([[]]))
+    assert main(["pdf", "table", str(scan), "--for", "cdsco"]) == 1
+    assert "is not read as a CDSCO drug alert list: the document carries no text" in (
+        capsys.readouterr().err
+    )
+    assert main(["pdf", "text", str(scan)]) == 0
+    assert "no text: this page is a picture of a page" in capsys.readouterr().out
+
+    not_a_pdf = tmp_path / "notes.txt"
+    not_a_pdf.write_text("just some notes", encoding="utf-8")
+    assert main(["pdf", "text", str(not_a_pdf)]) == 1
+    assert "it is not a PDF" in capsys.readouterr().err

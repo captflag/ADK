@@ -26,6 +26,7 @@ from batchward.core.clock import ist_datetime
 from batchward.cover_cli import add_cover_commands
 from batchward.intake_cli import add_intake_commands
 from batchward.orders_cli import add_orders_commands
+from batchward.pdf_cli import add_pdf_commands
 from batchward.price_cli import add_price_commands
 from batchward.recall_cli import add_recall_commands
 from batchward.records.recalls import receive_notice
@@ -120,6 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     add_whatsapp_commands(commands)
     add_brief_commands(commands)
     add_cover_commands(commands)
+    add_pdf_commands(commands)
 
     args = parser.parse_args(argv)
     return args.handler(args)
