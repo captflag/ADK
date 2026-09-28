@@ -22,6 +22,7 @@ import os
 from google.adk.agents import LlmAgent
 from google.adk.agents.context_cache_config import ContextCacheConfig
 from google.adk.apps import App
+from google.adk.models.base_llm import BaseLlm
 
 from batchward.agents.numbers_guard import NumbersGuardPlugin
 from batchward.agents.tools import ANALYST_TOOLS, FORECASTER_TOOLS, REPORTER_TOOLS
@@ -40,7 +41,7 @@ Rules you must always follow:
 """
 
 
-def build_team(model: str | None = None) -> LlmAgent:
+def build_team(model: str | BaseLlm | None = None) -> LlmAgent:
     """Build the desk and its specialists. The model defaults to ``BATCHWARD_MODEL``."""
     model = model or os.environ.get("BATCHWARD_MODEL", DEFAULT_MODEL)
 
@@ -145,7 +146,7 @@ If a request is unclear, ask one short question. Do not answer stock questions y
     )
 
 
-def build_app(model: str | None = None) -> App:
+def build_app(model: str | BaseLlm | None = None) -> App:
     """The team as an ADK app, with the Numbers Guard and context caching."""
     return App(
         name="desk",
