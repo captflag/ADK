@@ -1273,3 +1273,39 @@ def test_pdf_says_what_it_could_not_read(tmp_path, capsys):
     not_a_pdf.write_text("just some notes", encoding="utf-8")
     assert main(["pdf", "text", str(not_a_pdf)]) == 1
     assert "it is not a PDF" in capsys.readouterr().err
+
+
+def test_recall_import_alerts_reads_a_list_as_published(tmp_path, demo, capsys):
+    with open_db(demo[1]) as connection:
+        masters = read_masters(connection)
+    recalled = next(key for key in masters.batches if key.batch_no == "AZ4021")
+    item, company = masters.items[recalled.item_id], masters.parties[recalled.company_id]
+    heading = [
+        ["S. No.", "Name of Drugs", "Batch No.", "Date of", "Date of", "Manufactured By"],
+        ["", "", "", "Manufacture", "Expiry", ""],
+    ]
+    rows = [
+        [
+            ["1."],
+            [f"{item.molecule} Tablets", f"IP {item.strength}"],
+            ["AZ4021"],
+            ["Nov-2025"],
+            ["Oct-2027"],
+            [f"M/s. {company.name}", "Ltd."],
+        ]
+    ]
+    columns = [40.0, 75.0, 250.0, 320.0, 390.0, 460.0]
+    published = tmp_path / "alerts.pdf"
+    published.write_bytes(write_pdf([lay_out(columns, heading, rows)]))
+    records = tmp_path / "records.sqlite"
+    run = [
+        "recall", "import-alerts", demo[0], demo[1], "--records", str(records),
+        "--pdf", str(published), "--list", "CDSCO drug alert, August 2026", "--class", "II",
+    ]  # fmt: skip
+    capsys.readouterr()
+
+    assert main(run) == 0
+    printed = capsys.readouterr().out
+    assert "Read from alerts.pdf: 1 row under 6 columns, from page 1." in printed
+    assert "CDSCO drug alert, August 2026: 1 rows, 1 recorded as new notices" in printed
+    assert "  #1.  H00001  AZ4021, expiry 10/2027" in printed

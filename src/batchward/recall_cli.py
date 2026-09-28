@@ -18,11 +18,12 @@ from batchward.agents.data import DataUnavailableError, StockData, load_marg
 from batchward.bridge.marg_contract import MargLayoutError
 from batchward.bridge.marg_import import MargDataError
 from batchward.bridge.marg_layout import format_expiry, parse_expiry
-from batchward.compliance.cdsco import read_alert_list
+from batchward.compliance.cdsco import alert_table, read_alert_list
 from batchward.compliance.recall import Candidate, RecallClass, RecallNotice
 from batchward.core.clock import IST
 from batchward.core.holds import HoldError
 from batchward.core.models import BatchKey
+from batchward.pdf_cli import read_note
 from batchward.records import recalls
 from batchward.records.store import RecordsError, RecordStore
 from batchward.reporting.chemist_notice import chemist_notices
@@ -61,7 +62,13 @@ def add_recall_commands(commands: argparse._SubParsersAction) -> None:
         help="record every row of a CDSCO drug alert list as a notice, blocking exact matches",
     )
     _stock_and_records(alerts)
-    alerts.add_argument("--csv", type=Path, required=True, help="the alert list's table as CSV")
+    printed = alerts.add_mutually_exclusive_group(required=True)
+    printed.add_argument("--csv", type=Path, help="the alert list's table as CSV")
+    printed.add_argument(
+        "--pdf",
+        type=Path,
+        help="the alert list as published; its table is read from the text it prints",
+    )
     alerts.add_argument(
         "--list",
         dest="list_reference",
@@ -182,11 +189,19 @@ def _import_alerts(args: argparse.Namespace) -> int:
         now = datetime.now(IST)
         _not_in_future(args.received, now, "--received")
         stock = load_marg(args.marg)
-        try:
-            with args.csv.open(encoding="utf-8-sig", newline="") as lines:
-                alerts = read_alert_list(lines)
-        except OSError as error:
-            raise ValueError(f"cannot read {args.csv}: {error}") from error
+        if args.pdf:
+            try:
+                table = alert_table(args.pdf.read_bytes())
+            except OSError as error:
+                raise ValueError(f"cannot read {args.pdf}: {error}") from error
+            alerts = read_alert_list(table.lines())
+            print(read_note(table, args.pdf))
+        else:
+            try:
+                with args.csv.open(encoding="utf-8-sig", newline="") as lines:
+                    alerts = read_alert_list(lines)
+            except OSError as error:
+                raise ValueError(f"cannot read {args.csv}: {error}") from error
         new = unmatched = 0
         blocked, already, review, failed = [], [], [], []
         with RecordStore(args.records) as store:
