@@ -155,6 +155,16 @@ business data. What exists so far:
   The analyst can report where a recorded recall stands and which batches the
   price guard blocks, but no agent can place or lift a block. The agents have
   been tested offline; runs against Gemini need an API key.
+- **An eval suite for the team**, whose checks are code rather than a model's
+  opinion: 13 cases ask what an office asks, and each one checks which
+  specialist answered, which tools were called, that the figures quoted are the
+  ones those tools returned — read from the tool as the case is judged, never
+  written down — and that the team never claims to have blocked, ordered or sent
+  anything. Two cases are refusals: a figure no tool can give, and an
+  instruction to block a batch. A case whose data the database has not got is
+  left out rather than failed. The harness is checked offline with a scripted
+  model; judging the model itself needs a key
+  ([ADR 0027](docs/adr/0027-agents-judged-by-checks-in-code.md)).
 
 ## Try it
 
@@ -286,6 +296,20 @@ Open the page it prints and ask, for example, *"Where does the AZ4021 recall
 stand?"*, *"Which batches can't I bill because of ceiling prices?"*, *"Are my records
 ready for an inspection?"* or *"Give me the morning brief."*
 
+### Judge the agents
+
+```bash
+uv run batchward evals --list
+uv run --env-file .env batchward evals --marg sim-out/marg.sqlite --records sim-out/records.sqlite
+```
+
+`batchward evals --list` shows every case and what it checks, and needs nothing.
+A run asks the model each case in turn, so it needs `GOOGLE_API_KEY` and costs
+money; it prints a line per case, the failures in full with the answer that
+caused them, and answers 0 only when every case passed. `--out run.json` keeps
+the run to compare against later, and `--case <name>` asks one case
+([ADR 0027](docs/adr/0027-agents-judged-by-checks-in-code.md)).
+
 ## Project layout
 
 ```
@@ -303,6 +327,7 @@ src/batchward/
   reporting/  presentation: rupees in Indian digit grouping, the recall report, the brief
   channels/   WhatsApp: approval buttons, the brief, and the webhook for replies
   agents/     the ADK agent team, its read-only tools, and the data they read
+  evals/      the cases the team is judged on, and the checks that score them
   cli.py      command-line entry point; *_cli.py modules hold the subcommands
 agents/desk/  entry point that `adk web` and `adk run` load
 docs/adr/     architecture decision records
@@ -316,6 +341,7 @@ uv sync               # create the environment
 uv run pytest         # run the fast tests
 uv run pytest -m slow # three years through Marg, and the recall drill on three years (minutes)
 uv run --env-file .env pytest -m live   # against the real Gemini API; costs money
+uv run --env-file .env batchward evals --marg sim-out/marg.sqlite  # score the agents
 uv run ruff check     # lint
 uv run ruff format    # format
 ```

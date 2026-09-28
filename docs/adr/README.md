@@ -32,3 +32,4 @@ record that supersedes the old one.
 | [0024](0024-damage-on-arrival-debited-back.md) | Units that arrive damaged are counted apart, never posted, and debited back | Accepted |
 | [0025](0025-breakage-claimed-from-a-recorded-reason.md) | Breakage is claimed from a reason recorded against the credit note | Accepted |
 | [0026](0026-published-tables-read-from-the-pdf.md) | Published tables are read from the PDF's own text layer, and shown before use | Accepted |
+| [0027](0027-agents-judged-by-checks-in-code.md) | The agent team is judged by cases whose checks are code, never by a model | Accepted |
