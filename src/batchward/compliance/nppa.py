@@ -27,6 +27,7 @@ from decimal import Decimal, InvalidOperation
 
 from batchward.compliance.prices import CeilingPrice
 from batchward.core.models import Item
+from batchward.documents.tables import Table, table_from_pdf
 
 _COLUMNS = {
     "nameofthescheduledformulation": "formulation",
@@ -40,6 +41,15 @@ _COLUMNS = {
 }
 """Header text with everything but letters removed, for each column needed, as the
 notifications spell it."""
+_TITLES = {
+    "formulation": "Name of the Scheduled Formulation",
+    "dosage_form_and_strength": "Dosage form & Strength",
+    "unit": "Unit",
+    "price": "Ceiling Price (Rs.)",
+}
+"""Each column as a notification prints it, for looking one up in a PDF and saying so."""
+LEAST_COLUMNS = 3
+"""How many of the four columns a heading must name for the table to be the table."""
 _PRECISION = Decimal("0.0001")
 
 
@@ -130,6 +140,16 @@ def read_notification(lines: Iterable[str]) -> list[NotifiedCeiling]:
             )
         )
     return rows
+
+
+def notification_table(data: bytes) -> Table:
+    """The table a notification PDF prints, found by its own column titles (ADR 0026).
+
+    What comes back is the table as CSV, which ``read_notification`` reads and
+    ``batchward ceilings import --pdf`` shows before anything is recorded.
+    """
+    spellings = {spelling: _TITLES[key] for spelling, key in _COLUMNS.items()}
+    return table_from_pdf(data, spellings, least=LEAST_COLUMNS)
 
 
 def convert(

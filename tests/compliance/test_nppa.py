@@ -8,11 +8,14 @@ from batchward.compliance.nppa import (
     NotificationError,
     NotifiedCeiling,
     convert,
+    notification_table,
     pack_contents,
     read_notification,
 )
 from batchward.compliance.prices import CeilingTable
 from batchward.core.models import Item
+from batchward.documents.tables import TableError
+from pdf_documents import Printed, lay_out, write_pdf
 
 HEADER = "Sl. No.,Name of the Scheduled Formulation,Dosage form & Strength,Unit,Ceiling Price (Rs.)"
 EFFECTIVE = date(2026, 10, 1)
@@ -174,3 +177,39 @@ class TestConvert:
         ]
         with pytest.raises(NotificationError, match="line 3 prices Atorvastatin 10 mg"):
             import_(rows, [ATOR])
+
+
+PRINTED_COLUMNS = [40.0, 80.0, 250.0, 380.0, 470.0]
+PRINTED_HEADING = [
+    ["S. No.", "Name of the", "Dosage form &", "Unit", "Ceiling Price"],
+    ["", "Scheduled Formulation", "Strength", "", "(Rs.)"],
+]
+PRINTED_ROWS = [
+    [["1."], ["Atorvastatin"], ["Tablet 10 mg"], ["1 Tablet"], ["6.42"]],
+    [["2."], ["Insulin glargine"], ["Injection 100 IU/ml"], ["1 ml"], ["86.00"]],
+]
+
+
+class TestANotificationAsPublished:
+    """A notification arrives as a PDF, whose table is read from the text it prints."""
+
+    def printed(self, **written):
+        pieces = lay_out(PRINTED_COLUMNS, PRINTED_HEADING, PRINTED_ROWS, **written)
+        heading = Printed(150.0, 40.0, "MINISTRY OF CHEMICALS AND FERTILIZERS", 11.0)
+        return notification_table(write_pdf([[heading, *pieces]]))
+
+    def test_the_table_it_prints_is_read_as_the_table_it_is(self):
+        table = self.printed()
+        assert table.rows[0] == ("1.", "Atorvastatin", "Tablet 10 mg", "1 Tablet", "6.42")
+        assert table.unreadable == 0
+
+    def test_what_is_read_is_converted_to_the_pack_stocked(self):
+        rows = read_notification(self.printed().lines())
+        result = import_(rows, [ATOR])
+        (price,) = result.prices
+        assert (price.molecule, price.ceiling) == ("Atorvastatin", Decimal("64.2000"))
+        assert len(result.not_stocked) == 1
+
+    def test_a_document_that_prints_no_such_table_is_refused(self):
+        with pytest.raises(TableError, match="Ceiling Price"):
+            notification_table(write_pdf([[Printed(40.0, 40.0, "No table here")]]))
