@@ -11,13 +11,26 @@ from __future__ import annotations
 import argparse
 import sqlite3
 import sys
-from datetime import date, timedelta
+from collections.abc import Iterable
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from batchward.agents.data import DataUnavailableError, load_marg
 from batchward.arguments import non_negative_int, positive_int, rupees
 from batchward.bridge.marg_contract import MargLayoutError
-from batchward.compliance.nppa import convert, notification_table, read_notification
+from batchward.compliance.equivalents import (
+    Candidate,
+    Equivalent,
+    EquivalentTable,
+    suggestions,
+)
+from batchward.compliance.nppa import (
+    CeilingImport,
+    NotifiedCeiling,
+    convert,
+    notification_table,
+    read_notification,
+)
 from batchward.compliance.prices import (
     Cause,
     CeilingPrice,
@@ -26,7 +39,8 @@ from batchward.compliance.prices import (
     overcharge_exposure,
     price_rises,
 )
-from batchward.core.clock import end_of_day
+from batchward.core.clock import IST, end_of_day
+from batchward.core.models import Item
 from batchward.pdf_cli import read_note
 from batchward.records.store import RecordsError, RecordStore
 from batchward.reporting.inr import format_inr
@@ -94,6 +108,34 @@ def add_price_commands(commands: argparse._SubParsersAction) -> None:
     listing.add_argument("--records", type=Path, required=True)
     listing.set_defaults(handler=_list_ceilings)
 
+    same = actions.add_parser(
+        "equivalents",
+        help="record what a notified formulation is called in the item master, and list them",
+    )
+    kinds = same.add_subparsers(dest="equivalents_command", required=True)
+    record = kinds.add_parser("add", help="record that a notified formulation is a stocked one")
+    record.add_argument("--records", type=Path, required=True, help="Batchward records database")
+    record.add_argument(
+        "--notified", required=True, help="the formulation as the notification names it"
+    )
+    record.add_argument(
+        "--notified-strength",
+        required=True,
+        help='the strength as notified, e.g. "500 mg + 125 mg"',
+    )
+    record.add_argument(
+        "--molecule", required=True, help="the molecule as the item master records it"
+    )
+    record.add_argument(
+        "--strength", required=True, help="the strength as the item master records it"
+    )
+    record.add_argument("--by", required=True, help="who is recording it")
+    record.add_argument("--note", default="", help="why they are sure")
+    record.set_defaults(handler=_add_equivalent)
+    shown = kinds.add_parser("list", help="the equivalences recorded, superseded ones included")
+    shown.add_argument("--records", type=Path, required=True)
+    shown.set_defaults(handler=_list_equivalents)
+
 
 def _add_ceiling(args: argparse.Namespace) -> int:
     try:
@@ -136,6 +178,7 @@ def _import_ceilings(args: argparse.Namespace) -> int:
             stock.items.values(),
             reference=args.notification,
             effective_from=args.effective,
+            equivalents=_recorded_equivalents(args.records),
         )
         added = 0
         if not args.dry_run:
@@ -169,10 +212,16 @@ def _import_ceilings(args: argparse.Namespace) -> int:
             f"    {price.molecule} {price.strength}, {price.unit}: "
             f"{format_inr(price.ceiling, paise=True)} without GST"
         )
+    for row, recorded in result.through_equivalent:
+        print(
+            f"    line {row.row} matched through {recorded.noted_by}'s record that "
+            f"{row.formulation} {row.strength} is {recorded.molecule} {recorded.item_strength}"
+        )
     if result.not_stocked:
         count = len(result.not_stocked)
         verb = "matches" if count == 1 else "match"
-        print(f"  {_plural(count, 'notified formulation')} {verb} no item stocked")
+        print(f"  {_plural(count, 'notified formulation')} {verb} no item stocked:")
+        _print_unmatched(result, stock.items.values())
     if result.unconverted:
         print("  Enter these by hand with `batchward ceilings add`:")
         packs: dict[tuple[str, int, str], list[str]] = {}
@@ -195,6 +244,93 @@ def _import_ceilings(args: argparse.Namespace) -> int:
 
 def _plural(count: int, word: str) -> str:
     return f"{count} {word}" if count == 1 else f"{count} {word}s"
+
+
+def _recorded_equivalents(records: Path) -> EquivalentTable:
+    """What a person has said each notified formulation means, or nothing yet."""
+    if not records.is_file():
+        return EquivalentTable()
+    with RecordStore(records, create=False) as store:
+        return store.equivalent_table()
+
+
+def _print_unmatched(result: CeilingImport, items: Iterable[Item]) -> None:
+    """Every notified row that matched nothing, with what a person might mean by it."""
+    stale = {id(row): recorded for row, recorded in result.equivalents_matching_nothing}
+    stocked = list(items)
+    for row in result.not_stocked:
+        print(f"    line {row.row}  {row.formulation}, {row.strength}")
+        recorded = stale.get(id(row))
+        if recorded is not None:
+            print(
+                f"      recorded as {recorded.molecule} {recorded.item_strength} by "
+                f"{recorded.noted_by}, which matches no item either"
+            )
+        candidates = suggestions(row.formulation, row.strength, stocked)
+        for candidate in candidates:
+            held = _plural(candidate.items, "item")
+            print(
+                f"      might be {candidate.molecule} {candidate.strength} "
+                f"({held}): {candidate.reason}"
+            )
+        if candidates:
+            print(f"      {_record_it(row, candidates[0])}")
+
+
+def _record_it(row: NotifiedCeiling, candidate: Candidate) -> str:
+    """The command that records the equivalence, ready to be corrected and run."""
+    return (
+        "record it with: batchward ceilings equivalents add --records <records> "
+        f'--notified "{row.formulation}" --notified-strength "{row.strength}" '
+        f'--molecule "{candidate.molecule}" --strength "{candidate.strength}" --by <name>'
+    )
+
+
+def _add_equivalent(args: argparse.Namespace) -> int:
+    try:
+        equivalent = Equivalent(
+            formulation=args.notified,
+            strength=args.notified_strength,
+            molecule=args.molecule,
+            item_strength=args.strength,
+            noted_by=args.by,
+            noted_at=datetime.now(IST),
+            note=args.note,
+        )
+        with RecordStore(args.records) as store:
+            added = store.save_equivalent(equivalent)
+    except (RecordsError, ValueError, sqlite3.Error) as error:
+        print(f"batchward ceilings: {error}", file=sys.stderr)
+        return 1
+    if added:
+        print(
+            f"Recorded that {equivalent.formulation} {equivalent.strength} is "
+            f"{equivalent.molecule} {equivalent.item_strength}, on {args.by}'s word."
+        )
+        print("Notifications naming it will now price the packs stocked under that name.")
+    else:
+        print(f"Already recorded: {equivalent.formulation} {equivalent.strength}.")
+    return 0
+
+
+def _list_equivalents(args: argparse.Namespace) -> int:
+    try:
+        with RecordStore(args.records, create=False) as store:
+            recorded = store.equivalents()
+            in_force = {equivalent.key: equivalent for equivalent in store.equivalent_table().all()}
+    except (RecordsError, sqlite3.Error) as error:
+        print(f"batchward ceilings: {error}", file=sys.stderr)
+        return 1
+    if not recorded:
+        print("No equivalence has been recorded.")
+        return 0
+    print(f"{_plural(len(recorded), 'equivalence')} recorded:")
+    for equivalent in recorded:
+        superseded = "" if in_force.get(equivalent.key) == equivalent else "  (superseded)"
+        print(f"  {equivalent}{superseded}")
+        if equivalent.note:
+            print(f"      {equivalent.note}")
+    return 0
 
 
 def _list_ceilings(args: argparse.Namespace) -> int:

@@ -1311,6 +1311,97 @@ def test_recall_import_alerts_reads_a_list_as_published(tmp_path, demo, capsys):
     assert "  #1.  H00001  AZ4021, expiry 10/2027" in printed
 
 
+CALCIUM = NOTIFICATION.replace("Atorvastatin,", "Atorvastatin Calcium,")
+
+
+def test_ceilings_import_offers_what_an_unmatched_row_might_mean(tmp_path, demo, capsys):
+    table = tmp_path / "so-1234.csv"
+    table.write_text(CALCIUM, encoding="utf-8")
+    records = tmp_path / "records.sqlite"
+    run = [
+        "ceilings", "import", "--records", str(records), "--marg", demo[1], "--csv", str(table),
+        "--notification", "S.O. 1234(E)", "--effective", "2026-10-01",
+    ]  # fmt: skip
+
+    assert main([*run, "--dry-run"]) == 0
+    printed = capsys.readouterr().out
+    assert "Would record 0 ceiling prices" in printed
+    assert "    line 2  Atorvastatin Calcium, 10 mg" in printed
+    assert "might be Atorvastatin 10 mg" in printed
+    assert "the same strength; the names share atorvastatin" in printed
+    assert "record it with: batchward ceilings equivalents add" in printed
+    assert '--notified "Atorvastatin Calcium" --notified-strength "10 mg"' in printed
+
+
+def test_ceilings_prices_a_notified_name_once_a_person_records_what_it_is(tmp_path, demo, capsys):
+    table = tmp_path / "so-1234.csv"
+    table.write_text(CALCIUM, encoding="utf-8")
+    records = tmp_path / "records.sqlite"
+    record = [
+        "ceilings", "equivalents", "add", "--records", str(records),
+        "--notified", "Atorvastatin Calcium", "--notified-strength", "10 mg",
+        "--molecule", "Atorvastatin", "--strength", "10 mg", "--by", "Divyansh",
+        "--note", "the schedule's name for what we call Atorvastatin",
+    ]  # fmt: skip
+    assert main(record) == 0
+    assert "Recorded that Atorvastatin Calcium 10 mg is Atorvastatin 10 mg" in (
+        capsys.readouterr().out
+    )
+    assert main(record) == 0
+    assert "Already recorded" in capsys.readouterr().out
+
+    run = [
+        "ceilings", "import", "--records", str(records), "--marg", demo[1], "--csv", str(table),
+        "--notification", "S.O. 1234(E)", "--effective", "2026-10-01",
+    ]  # fmt: skip
+    assert main(run) == 0
+    printed = capsys.readouterr().out
+    assert "Atorvastatin 10 mg, strip of 10 tablets: ₹64.20 without GST" in printed
+    assert (
+        "line 2 matched through Divyansh's record that Atorvastatin Calcium 10 mg "
+        "is Atorvastatin 10 mg"
+    ) in printed
+
+
+def test_ceilings_equivalents_are_corrected_by_recording_a_later_one(tmp_path, capsys):
+    records = tmp_path / "records.sqlite"
+    record = [
+        "ceilings", "equivalents", "add", "--records", str(records),
+        "--notified", "Atorvastatin Calcium", "--notified-strength", "10 mg",
+        "--molecule", "Atorvastatin", "--strength", "10 mg", "--by", "Divyansh",
+    ]  # fmt: skip
+    assert main(record) == 0
+    corrected = [
+        "ceilings", "equivalents", "add", "--records", str(records),
+        "--notified", "Atorvastatin Calcium", "--notified-strength", "10 mg",
+        "--molecule", "Rosuvastatin", "--strength", "10 mg", "--by", "Asha",
+    ]  # fmt: skip
+    assert main(corrected) == 0
+    capsys.readouterr()
+
+    assert main(["ceilings", "equivalents", "list", "--records", str(records)]) == 0
+    listed = capsys.readouterr().out
+    assert "2 equivalences recorded:" in listed
+    assert "is Atorvastatin 10 mg (Divyansh," in listed
+    assert "  (superseded)" in listed
+    assert "is Rosuvastatin 10 mg (Asha," in listed
+    assert listed.index("(superseded)") < listed.index("Rosuvastatin")
+
+
+def test_ceilings_equivalents_refuses_a_name_that_needs_no_equivalence(tmp_path, capsys):
+    records = tmp_path / "records.sqlite"
+    run = [
+        "ceilings", "equivalents", "add", "--records", str(records),
+        "--notified", "Atorvastatin", "--notified-strength", "10 mg",
+        "--molecule", "atorvastatin", "--strength", "10mg", "--by", "Divyansh",
+    ]  # fmt: skip
+    assert main(run) == 1
+    assert "already matches the item master" in capsys.readouterr().err
+
+    assert main(["ceilings", "equivalents", "list", "--records", str(records)]) == 1
+    assert "batchward ceilings:" in capsys.readouterr().err
+
+
 def test_evals_lists_every_case_and_what_it_checks(capsys):
     assert main(["evals", "--list"]) == 0
     printed = capsys.readouterr().out
