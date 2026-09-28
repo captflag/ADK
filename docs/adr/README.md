@@ -33,3 +33,4 @@ record that supersedes the old one.
 | [0025](0025-breakage-claimed-from-a-recorded-reason.md) | Breakage is claimed from a reason recorded against the credit note | Accepted |
 | [0026](0026-published-tables-read-from-the-pdf.md) | Published tables are read from the PDF's own text layer, and shown before use | Accepted |
 | [0027](0027-agents-judged-by-checks-in-code.md) | The agent team is judged by cases whose checks are code, never by a model | Accepted |
+| [0028](0028-notified-names-matched-only-on-a-persons-word.md) | A notified formulation is matched to a stocked one only on a person's word | Accepted |

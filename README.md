@@ -64,7 +64,15 @@ business data. What exists so far:
   no ceiling on record is warned, not allowed. Past sales above the ceiling, or
   of a batch whose MRP rose more than 10% in a year, are totalled as exposure
   with 15% simple interest ([ADR 0011](docs/adr/0011-price-guard-dated-ceilings.md)).
-  This is Batchward's reading of the rules, not legal advice.
+  This is Batchward's reading of the rules, not legal advice. A notified
+  formulation the item master records under another name — the schedule's
+  "Amoxycillin and Potassium Clavulanate" against the office's "Amoxicillin +
+  Clavulanic acid 625 mg" — is priced only once a person records what that name
+  means, with their name and the date on the record. Nothing is matched by
+  resemblance; what resembles it is offered as a suggestion, with the reason
+  (the parts of the strength adding up, the same strength in another unit, a
+  name spelled a letter apart, or shared words) and the command that would
+  record it ([ADR 0028](docs/adr/0028-notified-names-matched-only-on-a-persons-word.md)).
 - **A registrar** that checks the records a Drugs Inspector examines under
   Rule 65: every sale memo carries the buyer's name, address and sale licence
   number with the drug, quantity, batch and manufacturer; every purchase names
@@ -204,7 +212,11 @@ from `--pdf <alert-list.pdf>` as published or from `--csv`, against every batch
 ever held, blocking only exact matches
 ([ADR 0014](docs/adr/0014-cdsco-alert-lists-as-notices.md)).
 `batchward ceilings add` records a notified ceiling price from its date, and
-`batchward ceilings list` shows them. `batchward ceilings import` records a
+`batchward ceilings list` shows them. `batchward ceilings equivalents add
+--notified <as notified> --notified-strength <as notified> --molecule <as
+stocked> --strength <as stocked> --by <name>` records what a notified
+formulation is called in the item master, and `ceilings equivalents list` shows
+every such record, superseded ones marked. `batchward ceilings import` records a
 whole NPPA notification, from `--pdf <notification.pdf>` as published or from
 `--csv` if its table has been copied to a spreadsheet, converting each price per
 tablet or per ml into a price per pack stocked
