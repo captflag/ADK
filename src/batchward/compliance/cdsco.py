@@ -22,6 +22,7 @@ from datetime import date, datetime
 
 from batchward.compliance.recall import RecallClass, RecallNotice
 from batchward.core.printed import expiry_month
+from batchward.documents.tables import Table, table_from_pdf
 
 _COLUMNS = {
     "sno": "serial",
@@ -46,6 +47,14 @@ _REQUIRED = {
     "expiry": "Date of Expiry",
     "manufacturer": "Manufactured By",
 }
+_TITLES = _REQUIRED | {
+    "serial": "S. No.",
+    "manufactured": "Date of Manufacture",
+    "result": "NSQ Result",
+}
+"""Each column as a list prints it, for looking one up in a PDF and saying so."""
+LEAST_COLUMNS = 3
+"""How many columns a heading must name for the table to be the alert list."""
 
 
 class AlertListError(ValueError):
@@ -81,6 +90,16 @@ class Alert:
             product=self.product,
             expiry=self.expiry,
         )
+
+
+def alert_table(data: bytes) -> Table:
+    """The table an alert list PDF prints, found by its own column titles (ADR 0026).
+
+    What comes back is the table as CSV, which ``read_alert_list`` reads and
+    ``batchward recall import-alerts --pdf`` shows before anything is recorded.
+    """
+    spellings = {spelling: _TITLES[key] for spelling, key in _COLUMNS.items()}
+    return table_from_pdf(data, spellings, least=LEAST_COLUMNS)
 
 
 def read_alert_list(lines: Iterable[str]) -> list[Alert]:
