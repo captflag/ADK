@@ -55,9 +55,9 @@ business data. What exists so far:
   releases are an append-only log ([ADR 0008](docs/adr/0008-batch-holds-log.md)).
   A report reconciles what each chemist was supplied against what they returned,
   with the CDSCO deadlines, and a draft notice to each chemist still holding the
-  batch is ready for the pharmacist to sign. A monthly CDSCO drug alert list can be checked
-  whole, row by row. The drill checks all of it against a seeded Class I
-  recall and three look-alike batches.
+  batch is ready for the pharmacist to sign. A monthly CDSCO drug alert list can
+  be checked whole, row by row, read from the PDF as published. The drill checks
+  all of it against a seeded Class I recall and three look-alike batches.
 - **A price guard**: ceiling prices are dated records, each in force from its
   own date. A batch whose printed MRP is above the ceiling plus GST in force is
   blocked before billing, with the notification named; a scheduled item with
@@ -133,6 +133,16 @@ business data. What exists so far:
   their last writing and as an approved template otherwise, followed by each
   waiting request with its buttons
   ([ADR 0021](docs/adr/0021-morning-brief-worked-out-in-python.md)).
+- **Published notifications read as published**: an NPPA notification or a
+  CDSCO drug alert list is read from the PDF itself — its text layer, in plain
+  Python, with nothing new to install — and the table it prints is found by its
+  own column titles, so a gazette's preamble and its page numbers stay out of
+  it. Columns come from where the titles sit, moved onto the white lanes the
+  rows leave; a row that wraps over three lines is one row. What is read is
+  shown as CSV to check, and to correct, before it is imported. A page that
+  carries no text is reported as a scan, never guessed at, and a character no
+  font accounts for is shown and counted rather than dropped
+  ([ADR 0026](docs/adr/0026-published-tables-read-from-the-pdf.md)).
 - **Batchward's own records**: recall notices, blocks and their release are kept
   in a SQLite database of their own, which refuses any edit or deletion
   ([ADR 0010](docs/adr/0010-own-records-database.md)). Receiving a notice and
@@ -180,13 +190,26 @@ exactly; `batchward recall release` lifts a block, which stays on record.
 `batchward recall notices` drafts a notice for each chemist still holding the
 batch, naming the bills it went out on, for the pharmacist to sign; nothing is
 sent. `batchward recall import-alerts` checks a whole CDSCO drug alert list,
-saved as CSV, against every batch ever held, blocking only exact matches
+from `--pdf <alert-list.pdf>` as published or from `--csv`, against every batch
+ever held, blocking only exact matches
 ([ADR 0014](docs/adr/0014-cdsco-alert-lists-as-notices.md)).
 `batchward ceilings add` records a notified ceiling price from its date, and
 `batchward ceilings list` shows them. `batchward ceilings import` records a
-whole NPPA notification from its table saved as CSV, converting each price per
+whole NPPA notification, from `--pdf <notification.pdf>` as published or from
+`--csv` if its table has been copied to a spreadsheet, converting each price per
 tablet or per ml into a price per pack stocked
 ([ADR 0013](docs/adr/0013-nppa-notifications-per-unit-sold.md)).
+
+```bash
+uv run batchward pdf table alert-list.pdf --for cdsco --out alerts.csv
+uv run batchward pdf text notification.pdf --page 2
+```
+
+`batchward pdf table` prints the table a published PDF prints, as the CSV the
+importers read, so it can be checked and corrected before anything is recorded;
+`batchward pdf text` prints the text layer line by line, with `--places` for
+where each piece of text sits, which is what to look at when a table is not
+found ([ADR 0026](docs/adr/0026-published-tables-read-from-the-pdf.md)).
 
 ```bash
 uv run batchward registrar --marg sim-out/marg.sqlite   # Rule 65 records, as an inspector would check them
@@ -272,6 +295,7 @@ src/batchward/
   bridge/     Marg ERP layout, export, import, layout checks, reconciliation
   analysis/   demand, forecasting, backtests, costs, ageing, expiry, stock health
   compliance/ recall, price guard, and the Rule 65 registrar
+  documents/  published PDFs read as the text they print, and the tables in it
   intake/     supplier invoices read, checked, matched and posted on approval
   buying/     what to order, and purchase orders
   claims/     return terms, claim windows and expiry claims
