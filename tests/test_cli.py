@@ -1195,6 +1195,37 @@ def notification_pdf(path):
     return path
 
 
+def test_ceilings_import_reads_a_notification_as_published(tmp_path, demo, capsys):
+    published = notification_pdf(tmp_path / "so-1234.pdf")
+    records = tmp_path / "records.sqlite"
+    run = [
+        "ceilings", "import", "--records", str(records), "--marg", demo[1],
+        "--pdf", str(published), "--notification", "S.O. 1234(E)", "--effective", "2026-10-01",
+    ]  # fmt: skip
+
+    assert main([*run, "--dry-run"]) == 0
+    printed = capsys.readouterr().out
+    assert "Read from so-1234.pdf: 3 rows under 5 columns, from page 1." in printed
+    assert "S.O. 1234(E), in force from 01/10/2026: 3 formulations notified" in printed
+    assert "Would record 1 ceiling prices" in printed
+
+    assert main(run) == 0
+    assert "Atorvastatin 10 mg, strip of 10 tablets: ₹64.20 without GST" in capsys.readouterr().out
+
+
+def test_ceilings_import_takes_a_notification_as_a_pdf_or_a_csv_but_not_both(tmp_path, demo):
+    published = notification_pdf(tmp_path / "so-1234.pdf")
+    run = [
+        "ceilings", "import", "--records", str(tmp_path / "r.sqlite"), "--marg", demo[1],
+        "--notification", "S.O. 1234(E)", "--effective", "2026-10-01",
+    ]  # fmt: skip
+    with pytest.raises(SystemExit) as refused:
+        main([*run, "--pdf", str(published), "--csv", str(published)])
+    assert refused.value.code == 2
+    with pytest.raises(SystemExit):
+        main(run)
+
+
 def test_pdf_table_prints_the_table_for_a_person_to_check(tmp_path, demo, capsys):
     published = notification_pdf(tmp_path / "so-1234.pdf")
     assert main(["pdf", "table", str(published), "--for", "nppa"]) == 0

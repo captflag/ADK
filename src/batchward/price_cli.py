@@ -17,7 +17,7 @@ from pathlib import Path
 from batchward.agents.data import DataUnavailableError, load_marg
 from batchward.arguments import non_negative_int, positive_int, rupees
 from batchward.bridge.marg_contract import MargLayoutError
-from batchward.compliance.nppa import convert, read_notification
+from batchward.compliance.nppa import convert, notification_table, read_notification
 from batchward.compliance.prices import (
     Cause,
     CeilingPrice,
@@ -27,6 +27,7 @@ from batchward.compliance.prices import (
     price_rises,
 )
 from batchward.core.clock import end_of_day
+from batchward.pdf_cli import read_note
 from batchward.records.store import RecordsError, RecordStore
 from batchward.reporting.inr import format_inr
 from batchward.sim.business import SimConfig, simulate
@@ -71,7 +72,13 @@ def add_price_commands(commands: argparse._SubParsersAction) -> None:
     )
     table.add_argument("--records", type=Path, required=True, help="Batchward records database")
     table.add_argument("--marg", type=Path, required=True, help="Marg database of items stocked")
-    table.add_argument("--csv", type=Path, required=True, help="the notification's table as CSV")
+    printed = table.add_mutually_exclusive_group(required=True)
+    printed.add_argument("--csv", type=Path, help="the notification's table as CSV")
+    printed.add_argument(
+        "--pdf",
+        type=Path,
+        help="the notification as published; its table is read from the text it prints",
+    )
     table.add_argument(
         "--notification", required=True, help='the notification\'s number, e.g. "S.O. 1234(E)"'
     )
@@ -115,10 +122,15 @@ def _add_ceiling(args: argparse.Namespace) -> int:
 
 
 def _import_ceilings(args: argparse.Namespace) -> int:
+    read_from = None
     try:
         stock = load_marg(args.marg)
-        with args.csv.open(encoding="utf-8-sig", newline="") as lines:
-            notified = read_notification(lines)
+        if args.pdf:
+            read_from = notification_table(args.pdf.read_bytes())
+            notified = read_notification(read_from.lines())
+        else:
+            with args.csv.open(encoding="utf-8-sig", newline="") as lines:
+                notified = read_notification(lines)
         result = convert(
             notified,
             stock.items.values(),
@@ -140,6 +152,8 @@ def _import_ceilings(args: argparse.Namespace) -> int:
         print(f"batchward ceilings: {error}", file=sys.stderr)
         return 1
 
+    if read_from is not None:
+        print(read_note(read_from, args.pdf))
     print(
         f"{args.notification}, in force from {args.effective:%d/%m/%Y}: "
         f"{len(notified)} formulations notified"
