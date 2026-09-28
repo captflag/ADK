@@ -1309,3 +1309,30 @@ def test_recall_import_alerts_reads_a_list_as_published(tmp_path, demo, capsys):
     assert "Read from alerts.pdf: 1 row under 6 columns, from page 1." in printed
     assert "CDSCO drug alert, August 2026: 1 rows, 1 recorded as new notices" in printed
     assert "  #1.  H00001  AZ4021, expiry 10/2027" in printed
+
+
+def test_evals_lists_every_case_and_what_it_checks(capsys):
+    assert main(["evals", "--list"]) == 0
+    printed = capsys.readouterr().out
+    assert "13 cases:" in printed
+    assert "  stock-health" in printed
+    assert "    asks    How is my stock doing?" in printed
+    assert "    checks  quotes stock_health_summary.stock_value.formatted" in printed
+    assert "    needs   dead stock" in printed
+
+
+def test_evals_asks_nothing_without_a_key_or_a_database(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("BATCHWARD_MARG_DB", raising=False)
+    assert main(["evals"]) == 1
+    assert "pass --marg or set BATCHWARD_MARG_DB" in capsys.readouterr().err
+
+    assert main(["evals", "--marg", str(tmp_path / "marg.sqlite")]) == 1
+    assert "GOOGLE_API_KEY is not set" in capsys.readouterr().err
+
+
+def test_evals_refuses_a_case_it_does_not_know_before_calling_a_model(demo, monkeypatch, capsys):
+    monkeypatch.setenv("GOOGLE_API_KEY", "not-used: the run stops before any call")
+    run = ["evals", demo[0], demo[1], "--records", demo[3], "--case", "no-such-case"]
+    assert main(run) == 1
+    assert "there is no case called no-such-case" in capsys.readouterr().err

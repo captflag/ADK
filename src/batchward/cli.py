@@ -24,6 +24,7 @@ from batchward.claims.breakage import Reason, ReturnReason
 from batchward.claims_cli import add_claims_commands
 from batchward.core.clock import ist_datetime
 from batchward.cover_cli import add_cover_commands
+from batchward.evals_cli import add_eval_commands
 from batchward.intake_cli import add_intake_commands
 from batchward.orders_cli import add_orders_commands
 from batchward.pdf_cli import add_pdf_commands
@@ -122,6 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     add_brief_commands(commands)
     add_cover_commands(commands)
     add_pdf_commands(commands)
+    add_eval_commands(commands)
 
     args = parser.parse_args(argv)
     return args.handler(args)
