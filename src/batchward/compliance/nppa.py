@@ -13,7 +13,9 @@ items stocked by molecule and strength, and its price is multiplied out by each
 item's pack: ₹6.42 for 1 tablet is ₹64.20 for a strip of 10 tablets. Nothing is
 guessed. A pack whose contents cannot be read in the notified unit, and an item
 that matches a notified formulation but is not marked as scheduled, are reported
-for a person to settle.
+for a person to settle. A formulation the item master records under another name
+is matched only through an equivalence a person recorded (ADR 0028); nothing is
+matched by resemblance.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from batchward.compliance.equivalents import Equivalent, EquivalentTable
 from batchward.compliance.prices import CeilingPrice
 from batchward.core.models import Item
 from batchward.documents.tables import Table, table_from_pdf
@@ -93,6 +96,10 @@ class CeilingImport:
     not_marked_scheduled: tuple[Item, ...]
     """Items of a notified formulation that the billing data does not mark as scheduled, so
     the Price Guard would not check them."""
+    through_equivalent: tuple[tuple[NotifiedCeiling, Equivalent], ...] = ()
+    """Rows matched only because a person recorded what the notified name means (ADR 0028)."""
+    equivalents_matching_nothing: tuple[tuple[NotifiedCeiling, Equivalent], ...] = ()
+    """Rows whose recorded equivalence matches no item either: the record has gone stale."""
 
 
 def read_notification(lines: Iterable[str]) -> list[NotifiedCeiling]:
@@ -158,20 +165,41 @@ def convert(
     *,
     reference: str,
     effective_from: date,
+    equivalents: EquivalentTable | None = None,
 ) -> CeilingImport:
-    """Ceiling prices per unit sold for every stocked pack of every notified formulation."""
+    """Ceiling prices per unit sold for every stocked pack of every notified formulation.
+
+    A row whose formulation no item is recorded under is matched through an
+    equivalence a person recorded, if there is one (ADR 0028); nothing is
+    matched by resemblance.
+    """
     stocked = list(items)
     prices: dict[tuple[str, str, str], CeilingPrice] = {}
     not_stocked, unconverted, unscheduled = [], [], {}
+    through_equivalent, equivalents_matching_nothing = [], []
     for row in notified:
         matching = [
             item
             for item in stocked
             if _same(item.molecule, row.formulation) and _same(item.strength, row.strength)
         ]
+        recorded = None
+        if not matching and equivalents is not None:
+            recorded = equivalents.find(row.formulation, row.strength)
+            if recorded is not None:
+                matching = [
+                    item
+                    for item in stocked
+                    if _same(item.molecule, recorded.molecule)
+                    and _same(item.strength, recorded.item_strength)
+                ]
         if not matching:
             not_stocked.append(row)
+            if recorded is not None:
+                equivalents_matching_nothing.append((row, recorded))
             continue
+        if recorded is not None:
+            through_equivalent.append((row, recorded))
         for item in sorted(matching, key=lambda item: item.id):
             if not item.dpco_scheduled:
                 unscheduled[item.id] = item
@@ -198,6 +226,8 @@ def convert(
         not_stocked=tuple(not_stocked),
         unconverted=tuple(unconverted),
         not_marked_scheduled=tuple(unscheduled.values()),
+        through_equivalent=tuple(through_equivalent),
+        equivalents_matching_nothing=tuple(equivalents_matching_nothing),
     )
 
 

@@ -1,9 +1,10 @@
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
 
+from batchward.compliance.equivalents import Equivalent, EquivalentTable
 from batchward.compliance.nppa import (
     NotificationError,
     NotifiedCeiling,
@@ -13,6 +14,7 @@ from batchward.compliance.nppa import (
     read_notification,
 )
 from batchward.compliance.prices import CeilingTable
+from batchward.core.clock import IST
 from batchward.core.models import Item
 from batchward.documents.tables import TableError
 from pdf_documents import Printed, lay_out, write_pdf
@@ -177,6 +179,72 @@ class TestConvert:
         ]
         with pytest.raises(NotificationError, match="line 3 prices Atorvastatin 10 mg"):
             import_(rows, [ATOR])
+
+
+class TestConvertThroughAnEquivalence:
+    """A formulation the item master records under another name (ADR 0028)."""
+
+    NOTED = datetime(2026, 9, 28, 11, 0, tzinfo=IST)
+
+    def equivalence(self, **rest) -> Equivalent:
+        fields = {
+            "formulation": "Atorvastatin Calcium",
+            "strength": "10 mg",
+            "molecule": "Atorvastatin",
+            "item_strength": "10 mg",
+            "noted_by": "Divyansh",
+            "noted_at": self.NOTED,
+        } | rest
+        return Equivalent(**fields)
+
+    def row(self) -> NotifiedCeiling:
+        return notified("Atorvastatin Calcium", "Tablet 10 mg", "1 Tablet", "6.42")
+
+    def test_without_one_the_row_matches_nothing(self):
+        result = import_([self.row()], [ATOR])
+        assert result.prices == () and len(result.not_stocked) == 1
+        assert result.through_equivalent == ()
+
+    def test_with_one_the_pack_is_priced_and_it_is_said_who_recorded_it(self):
+        table = EquivalentTable([self.equivalence()])
+        result = convert(
+            [self.row()],
+            [ATOR],
+            reference="S.O. 1234(E)",
+            effective_from=EFFECTIVE,
+            equivalents=table,
+        )
+        (price,) = result.prices
+        assert (price.molecule, price.ceiling) == ("Atorvastatin", Decimal("64.2000"))
+        ((row, recorded),) = result.through_equivalent
+        assert (row.row, recorded.noted_by) == (2, "Divyansh")
+        assert result.not_stocked == ()
+
+    def test_an_equivalence_pointing_at_nothing_is_reported_not_ignored(self):
+        table = EquivalentTable([self.equivalence(molecule="Rosuvastatin")])
+        result = convert(
+            [self.row()],
+            [ATOR],
+            reference="S.O. 1234(E)",
+            effective_from=EFFECTIVE,
+            equivalents=table,
+        )
+        assert result.prices == ()
+        assert len(result.not_stocked) == 1
+        ((_, stale),) = result.equivalents_matching_nothing
+        assert stale.molecule == "Rosuvastatin"
+
+    def test_a_row_that_matches_on_its_own_never_looks_at_the_equivalences(self):
+        table = EquivalentTable([self.equivalence(formulation="Atorvastatin", molecule="Nothing")])
+        result = convert(
+            [notified("Atorvastatin", "Tablet 10 mg", "1 Tablet", "6.42")],
+            [ATOR],
+            reference="S.O. 1234(E)",
+            effective_from=EFFECTIVE,
+            equivalents=table,
+        )
+        assert len(result.prices) == 1
+        assert result.through_equivalent == ()
 
 
 PRINTED_COLUMNS = [40.0, 80.0, 250.0, 380.0, 470.0]
