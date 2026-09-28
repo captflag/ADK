@@ -50,3 +50,5 @@ select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
 [tool.ruff.lint.per-file-ignores]
 # One row per molecule reads better than wrapped constructor calls.
 "src/batchward/sim/catalogue.py" = ["E501"]
+# A table of glyph names holds the very characters it is accused of confusing.
+"src/batchward/documents/glyphs.py" = ["RUF001"]
