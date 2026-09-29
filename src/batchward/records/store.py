@@ -11,8 +11,9 @@ notes that settle them (ADR 0018), the messages approvers sent (ADR 0019),
 the purchase orders placed on approval (ADR 0020), each morning brief sent
 (ADR 0021), how many units each product's case holds (ADR 0023), why stock
 came back from a chemist (ADR 0025), and what a person says a notified
-formulation is called in the item master (ADR 0028). They are kept here, in a
-database file of their own (ADR 0010).
+formulation is called in the item master (ADR 0028), and the transfers that
+move blocked stock out of the godowns Marg bills from (ADR 0029). They are kept
+here, in a database file of their own (ADR 0010).
 
 Like the ledger (ADR 0001) these records are only ever added to. The database
 enforces that itself: triggers refuse every UPDATE and DELETE, so a mistake is
@@ -42,6 +43,7 @@ from batchward.claims.terms import ReturnTerms, TermsTable
 from batchward.compliance.equivalents import Equivalent, EquivalentTable
 from batchward.compliance.equivalents import normal as normal_name
 from batchward.compliance.prices import CeilingPrice, CeilingTable
+from batchward.compliance.quarantine import Move, Transfer
 from batchward.compliance.recall import RecallClass, RecallNotice
 from batchward.core.approvals import Approval, ApprovalRequest, Decision, RequestState
 from batchward.core.holds import Hold, HoldError, HoldLog, Release
@@ -255,6 +257,28 @@ CREATE TABLE formulation_equivalents (
 );
 """ + _only_ever_added_to("formulation_equivalents")
 
+_QUARANTINE = """
+CREATE TABLE quarantine_transfers (
+    number TEXT PRIMARY KEY,
+    approval_id TEXT NOT NULL UNIQUE REFERENCES approvals (id),
+    godown TEXT NOT NULL,
+    made_on TEXT NOT NULL
+);
+CREATE TABLE quarantine_moves (
+    transfer TEXT NOT NULL REFERENCES quarantine_transfers (number),
+    company_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    batch_no TEXT NOT NULL,
+    expiry TEXT NOT NULL,
+    from_location TEXT NOT NULL,
+    to_location TEXT NOT NULL,
+    units INTEGER NOT NULL CHECK (units > 0),
+    hold_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    PRIMARY KEY (transfer, company_id, item_id, batch_no, expiry, from_location, to_location)
+);
+""" + _only_ever_added_to("quarantine_transfers", "quarantine_moves")
+
 MIGRATIONS: tuple[str, ...] = (
     _RECALLS,
     _CEILINGS,
@@ -268,6 +292,7 @@ MIGRATIONS: tuple[str, ...] = (
     _CASES,
     _REASONS,
     _EQUIVALENTS,
+    _QUARANTINE,
 )
 """Each entry takes the database from the schema before it to the next. Never edit one."""
 SCHEMA_VERSION = len(MIGRATIONS)
@@ -284,6 +309,7 @@ _TABLES: tuple[set[str], ...] = (
     {"case_sizes"},
     {"return_reasons"},
     {"formulation_equivalents"},
+    {"quarantine_transfers", "quarantine_moves"},
 )
 """The tables each migration creates, to recognise a file that only claims to be one."""
 
@@ -923,6 +949,47 @@ class RecordStore:
         """What each notified formulation is taken to be, latest record winning."""
         return EquivalentTable(self.equivalents())
 
+    def save_transfer(self, transfer: Transfer, approval_id: str) -> None:
+        """Record a quarantine transfer made on its approval; refused if already recorded."""
+        with self.atomically():
+            self._insert(
+                "INSERT INTO quarantine_transfers VALUES (?, ?, ?, ?)",
+                (transfer.number, approval_id, transfer.godown, transfer.on.isoformat()),
+                f"quarantine transfer {transfer.number}",
+            )
+            for move in transfer.moves:
+                self._insert(
+                    "INSERT INTO quarantine_moves VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        transfer.number,
+                        move.batch.company_id,
+                        move.batch.item_id,
+                        move.batch.batch_no,
+                        move.batch.expiry.isoformat(),
+                        move.from_location,
+                        move.to_location,
+                        move.units,
+                        move.hold_id,
+                        move.reason,
+                    ),
+                    f"a move of transfer {transfer.number}",
+                )
+
+    def quarantine_moves(self) -> list[Move]:
+        """Every move ever made, earliest transfer first: where quarantined stock came from."""
+        rows = self._connection.execute(
+            "SELECT m.* FROM quarantine_moves m JOIN quarantine_transfers t"
+            " ON t.number = m.transfer ORDER BY t.made_on, t.number, m.rowid"
+        )
+        return [_read(_move, row, "quarantine move") for row in rows]
+
+    def transfers(self) -> list[tuple[str, str, date]]:
+        """Each transfer made, earliest first: its number, its godown and the day."""
+        rows = self._connection.execute(
+            "SELECT number, godown, made_on FROM quarantine_transfers ORDER BY made_on, number"
+        )
+        return [(number, godown, date.fromisoformat(made_on)) for number, godown, made_on in rows]
+
     def save_case_size(self, size: CaseSize) -> bool:
         """Record how many units a product's case holds. False if the same is recorded.
 
@@ -1124,6 +1191,18 @@ def _return_reason(row: tuple) -> ReturnReason:
 
 def _names(pair: tuple[str, str]) -> tuple[str, str]:
     return normal_name(pair[0]), normal_name(pair[1])
+
+
+def _move(row: tuple) -> Move:
+    _, company_id, item_id, batch_no, expiry, source, target, units, hold_id, reason = row
+    return Move(
+        batch=BatchKey(company_id, item_id, batch_no, date.fromisoformat(expiry)),
+        from_location=source,
+        to_location=target,
+        units=int(units),
+        hold_id=hold_id,
+        reason=reason,
+    )
 
 
 def _equivalent(row: tuple) -> Equivalent:
