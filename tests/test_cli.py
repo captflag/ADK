@@ -1311,6 +1311,73 @@ def test_recall_import_alerts_reads_a_list_as_published(tmp_path, demo, capsys):
     assert "  #1.  H00001  AZ4021, expiry 10/2027" in printed
 
 
+def test_recall_quarantine_moves_blocked_stock_out_of_the_selling_godowns(
+    tmp_path, demo, monkeypatch, capsys
+):
+    monkeypatch.setenv("BATCHWARD_UNSELLABLE_LOCATIONS", "RETURNS,QUAR")
+    records = tmp_path / "records.sqlite"
+    where = ["--marg", demo[1], "--records", str(records)]
+    assert main(["recall", "receive", *where, *notice_args(demo)]) == 0
+    capsys.readouterr()
+
+    assert main(["recall", "quarantine", "list", *where]) == 0
+    listed = capsys.readouterr().out
+    assert "blocked batch lines are still where Marg can bill them" in listed
+    assert "AZ4021, expiry 10/2027" in listed
+    assert "H00001: Class I recall notice from the manufacturer" in listed
+    assert "Draw up the transfer with `recall quarantine draft`" in listed
+
+    out = tmp_path / "quarantine"
+    draft = ["recall", "quarantine", "draft", *where, "--out", str(out)]
+    assert main([*draft, "--approve-by", "Divyansh"]) == 0
+    drafted = capsys.readouterr().out
+    assert "units to QUAR" in drafted
+    assert "GODOWN -> QUAR" in drafted
+    assert "Approved by Divyansh" in drafted
+
+    written = sorted(path.name for path in out.iterdir())
+    assert written == ["QT-260215.marg-transfer.csv", "QT-260215.quarantine.txt"]
+    voucher = (out / "QT-260215.marg-transfer.csv").read_text(encoding="utf-8")
+    assert voucher.splitlines()[0].startswith("VNO,LINE,VTYPE")
+    assert ",TO," in voucher and ",TI," in voucher and ",QUAR," in voucher
+    sheet = (out / "QT-260215.quarantine.txt").read_text(encoding="utf-8")
+    assert "QUARANTINE TRANSFER QT/260215" in sheet
+    assert sheet.endswith("Marg does not act on this until the transfer voucher is imported.")
+
+    # Marg has not imported it, so the stock is still where it was, and the list says so.
+    assert main(["recall", "quarantine", "list", *where]) == 0
+    again = capsys.readouterr().out
+    assert "Transfer QT/260215 of 15/02/2026 covers" in again
+    assert "has not\nbeen imported into Marg yet" in again
+
+    assert main([*draft, "--approve-by", "Divyansh"]) == 0
+    assert "Already approved by Divyansh" in capsys.readouterr().out
+
+
+def test_recall_quarantine_refuses_a_godown_stock_is_sold_from(tmp_path, demo, capsys):
+    records = tmp_path / "records.sqlite"
+    where = ["--marg", demo[1], "--records", str(records)]
+    assert main(["recall", "receive", *where, *notice_args(demo)]) == 0
+    capsys.readouterr()
+    assert main(["recall", "quarantine", "list", *where, "--godown", "MAIN"]) == 1
+    assert "not known to be a godown stock is never sold from" in capsys.readouterr().err
+
+
+def test_recall_quarantine_has_nothing_to_move_when_nothing_is_blocked(
+    tmp_path, demo, monkeypatch, capsys
+):
+    monkeypatch.setenv("BATCHWARD_UNSELLABLE_LOCATIONS", "RETURNS,QUAR")
+    records = tmp_path / "records.sqlite"
+    where = ["--marg", demo[1], "--records", str(records)]
+    with RecordStore(records):
+        pass
+    capsys.readouterr()
+    assert main(["recall", "quarantine", "list", *where]) == 0
+    assert "No blocked stock is sitting in a godown Marg bills from" in capsys.readouterr().out
+    assert main(["recall", "quarantine", "draft", *where, "--out", str(tmp_path / "q")]) == 0
+    assert "There is nothing to move" in capsys.readouterr().out
+
+
 CALCIUM = NOTIFICATION.replace("Atorvastatin,", "Atorvastatin Calcium,")
 
 

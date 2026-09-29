@@ -8,17 +8,27 @@ a whole CDSCO drug alert list is imported at once (ADR 0014).
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
 
-from batchward.agents.data import DataUnavailableError, StockData, load_marg
+from batchward.agents.data import (
+    DataUnavailableError,
+    StockData,
+    load_marg,
+    unsellable_locations,
+)
+from batchward.agents.quarantining import ask_to_move_blocked_stock
+from batchward.approvals_cli import request_approval
 from batchward.bridge.marg_contract import MargLayoutError
 from batchward.bridge.marg_import import MargDataError
 from batchward.bridge.marg_layout import format_expiry, parse_expiry
 from batchward.compliance.cdsco import alert_table, read_alert_list
+from batchward.compliance.quarantine import GODOWN
+from batchward.compliance.quarantine_run import draft_for
 from batchward.compliance.recall import Candidate, RecallClass, RecallNotice
 from batchward.core.clock import IST
 from batchward.core.holds import HoldError
@@ -28,6 +38,7 @@ from batchward.records import recalls
 from batchward.records.store import RecordsError, RecordStore
 from batchward.reporting.chemist_notice import chemist_notices
 from batchward.reporting.recall import format_moment, render_recall_report
+from batchward.whatsapp_cli import notifier
 
 
 def add_recall_commands(commands: argparse._SubParsersAction) -> None:
@@ -108,6 +119,31 @@ def add_recall_commands(commands: argparse._SubParsersAction) -> None:
     notices.add_argument("--force", action="store_true", help="overwrite notices already written")
     notices.add_argument("--as-of", type=moment, help="draft as of this moment; default now")
     notices.set_defaults(handler=_notices)
+
+    quarantine = actions.add_parser(
+        "quarantine",
+        help="move blocked stock out of the godowns Marg bills from, and see what has not moved",
+    )
+    moves = quarantine.add_subparsers(dest="quarantine_command", required=True)
+    gap = moves.add_parser("list", help="blocked stock still sitting where Marg can bill it")
+    _stock_and_records(gap)
+    gap.add_argument("--godown", default=env_godown(), help=f"quarantine godown (default {GODOWN})")
+    gap.set_defaults(handler=_quarantine_list)
+
+    move = moves.add_parser(
+        "draft", help="draw up today's transfer for Marg to import, and ask for approval"
+    )
+    _stock_and_records(move)
+    move.add_argument(
+        "--godown", default=env_godown(), help=f"quarantine godown (default {GODOWN})"
+    )
+    move.add_argument("--out", type=Path, required=True, help="folder for the voucher and sheet")
+    move.add_argument("--approve-by", help="approve it at once, as this person")
+    move.add_argument(
+        "--notify", action="store_true", help="send the request to the approvers on WhatsApp"
+    )
+    move.add_argument("--approvers", type=Path, help="CSV of phone,name to notify")
+    move.set_defaults(handler=_quarantine_draft)
 
     release = actions.add_parser("release", help="lift a hold; the hold stays on record")
     release.add_argument("--records", type=Path, required=True)
@@ -363,6 +399,96 @@ def _write_notices(args: argparse.Namespace, drafts: dict[tuple[str, str], str])
     except OSError as error:
         raise ValueError(f"cannot write notices to {args.out}: {error}") from error
     print(f"Wrote {len(files)} draft notices to {args.out}")
+
+
+def env_godown() -> str:
+    """The quarantine godown, from the environment or the default (ADR 0029)."""
+    return os.environ.get("BATCHWARD_QUARANTINE_GODOWN", "").strip() or GODOWN
+
+
+def _quarantine_list(args: argparse.Namespace) -> int:
+    with _failures():
+        drafted = draft_for(args.marg, args.records, godown=args.godown)
+        stock = load_marg(args.marg, unsellable=unsellable_locations())
+        _print_quarantine(args, drafted, stock)
+        return 0
+    return 1
+
+
+def _print_quarantine(args: argparse.Namespace, drafted, stock: StockData) -> None:
+    transfer = drafted.transfer
+    if not transfer.into:
+        when = f"{transfer.on:%d/%m/%Y}"
+        print(f"No blocked stock is sitting in a godown Marg bills from (as of {when}).")
+    else:
+        units = sum(move.units for move in transfer.into)
+        print(
+            f"{units} units of {len(transfer.into)} blocked batch lines are still where Marg "
+            f"can bill them:"
+        )
+        for move in transfer.into:
+            print(f"  {move.units:>6}  {_describe(move.batch, stock)}  in {move.from_location}")
+            print(f"          {move.hold_id}: {move.reason}")
+    for move in transfer.back:
+        print(f"  {move.units:>6}  {_describe(move.batch, stock)}  released, to go back to "
+              f"{move.to_location}")  # fmt: skip
+    for move in transfer.stranded:
+        print(f"  {move.units:>6}  {_describe(move.batch, stock)}  in {args.godown}: {move.reason}")
+    if not transfer.empty:
+        print(_already_drawn_up(args.records, transfer))
+
+
+def _already_drawn_up(records: Path, transfer) -> str:
+    """Whether a transfer covering this stock was approved already and is waiting to be imported."""
+    with RecordStore(records, create=False) as store:
+        made = store.transfers()
+        moved = store.quarantine_moves()
+    covered = {(move.batch, move.from_location) for move in moved}
+    waiting = sum(
+        move.units for move in transfer.moves if (move.batch, move.from_location) in covered
+    )
+    if not made or not waiting:
+        return (
+            "Draw up the transfer with `recall quarantine draft`; Marg moves nothing until\n"
+            "the voucher it writes has been imported."
+        )
+    number, _, on = made[-1]
+    return (
+        f"Transfer {number} of {on:%d/%m/%Y} covers {waiting} of these units and has not\n"
+        f"been imported into Marg yet: until it is, the stock is where Marg can bill it."
+    )
+
+
+def _quarantine_draft(args: argparse.Namespace) -> int:
+    with _failures():
+        drafted = draft_for(args.marg, args.records, godown=args.godown)
+        stock = load_marg(args.marg, unsellable=unsellable_locations())
+        if drafted.posting is None:
+            print("There is nothing to move: no blocked batch is in a godown Marg bills from.")
+            return 0
+        transfer = drafted.transfer
+        print(transfer.summary())
+        for move in transfer.moves:
+            print(
+                f"  {move.units:>6}  {_describe(move.batch, stock)}  "
+                f"{move.from_location} -> {move.to_location}"
+            )
+        for move in transfer.stranded:
+            where = _describe(move.batch, stock)
+            print(f"  {move.units:>6}  {where}  left in place: {move.reason}")
+    return _ask_to_move(args, drafted)
+
+
+def _ask_to_move(args: argparse.Namespace, drafted) -> int:
+    return request_approval(
+        drafted.posting,
+        records=args.records,
+        start=lambda: ask_to_move_blocked_stock(
+            args.marg, args.records, args.godown, drafted.posting, out=args.out
+        ),
+        approve_by=args.approve_by,
+        notify=notifier(args),
+    )
 
 
 def _release(args: argparse.Namespace) -> int:
