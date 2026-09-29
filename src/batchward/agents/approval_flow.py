@@ -118,10 +118,17 @@ class Flow:
 
 def flows() -> dict[str, Flow]:
     """Every kind of action that waits for approval, by kind."""
-    from batchward.agents import breakage, claiming, ordering, receiving
+    from batchward.agents import breakage, claiming, ordering, quarantining, receiving
 
     return {
-        flow.kind: flow for flow in (receiving.FLOW, claiming.FLOW, ordering.FLOW, breakage.FLOW)
+        flow.kind: flow
+        for flow in (
+            receiving.FLOW,
+            claiming.FLOW,
+            ordering.FLOW,
+            breakage.FLOW,
+            quarantining.FLOW,
+        )
     }
 
 
