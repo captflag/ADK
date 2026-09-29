@@ -48,6 +48,7 @@ from batchward.compliance.prices import (
     check_batch_price,
     overcharge_exposure,
 )
+from batchward.compliance.quarantine import blocked_and_sellable
 from batchward.compliance.recall_report import DeadlineState
 from batchward.core.approvals import RequestState
 from batchward.core.clock import end_of_day, ist_date, ist_datetime
@@ -68,6 +69,7 @@ class Topic(StrEnum):
     """What a line is about. They are listed most urgent first, and the brief keeps this order."""
 
     RECALL = "recall"
+    NOT_MOVED = "still billable"
     PRICE = "do not bill"
     CLAIMS = "claims closing"
     ORDERS = "to order"
@@ -194,6 +196,7 @@ def morning_brief(
         if windows is None:
             not_checked.append("claim windows, as no return terms are on record")
         lines.append(_recalls(stock, store, costs, on_hand))
+        lines.append(_not_moved(stock, store, costs))
 
     exposure = overcharge_exposure(stock.ledger, stock.batches, stock.items, ceilings, as_of=today)
     lines += [
@@ -451,6 +454,33 @@ def _expiry(
     if claimable:
         text += f"; {format_inr(claimable)} of credit can be claimed from companies now"
     return Line(Topic.EXPIRY, rupees, text + ".")
+
+
+def _not_moved(
+    stock: StockData, store: RecordStore, costs: Mapping[BatchKey, Decimal]
+) -> Line | None:
+    """Blocked stock still sitting where Marg can bill it (ADR 0029)."""
+    moves = blocked_and_sellable(store.hold_log(), stock.ledger, stock.locations)
+    if not moves:
+        return None
+    units = sum(move.units for move in moves)
+    rupees = sum((costs.get(move.batch, Decimal(0)) * move.units for move in moves), Decimal(0))
+    batches = sorted({move.batch.batch_no for move in moves})
+    named = batches[0] if len(batches) == 1 else f"{len(batches)} batches"
+    where = sorted({move.from_location for move in moves})
+    text = (
+        f"{units} {_plural(units, 'unit')} of {named} {_plural(len(batches), 'is', 'are')} "
+        f"blocked but still in {', '.join(where)}, where Marg can bill "
+        f"{_plural(len(batches), 'it', 'them')}: {format_inr(rupees)} at cost."
+    )
+    made = store.transfers()
+    covered = {(move.batch, move.from_location) for move in store.quarantine_moves()}
+    waiting = sum(move.units for move in moves if (move.batch, move.from_location) in covered)
+    if made and waiting:
+        text += f" Transfer {made[-1][0]} covers {waiting} of them and has not been imported."
+    else:
+        text += " Draw it up with `recall quarantine draft`."
+    return Line(Topic.NOT_MOVED, rupees, text)
 
 
 def _dead_stock(stock: StockData, costs: Mapping[BatchKey, Decimal]) -> Line | None:

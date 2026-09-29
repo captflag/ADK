@@ -84,11 +84,19 @@ def test_lines_keep_the_fixed_order_of_urgency_and_each_quotes_its_figure(stock,
     brief = brief_of(stock, records)
     topics = [line.topic for line in brief.lines]
     assert topics == sorted(topics, key=list(Topic).index)
-    assert topics[:2] == [Topic.RECALL, Topic.PRICE]
+    assert topics[:3] == [Topic.RECALL, Topic.NOT_MOVED, Topic.PRICE]
     assert all(format_inr(line.rupees) in line.text for line in brief.lines)
     assert brief.shown == brief.lines[:5]
     assert brief.not_checked == ()
     assert brief.on == stock.today
+
+
+def test_the_blocked_stock_line_names_what_marg_can_still_bill(stock, records):
+    (line,) = [line for line in brief_of(stock, records).lines if line.topic is Topic.NOT_MOVED]
+    assert "blocked but still in" in line.text
+    assert "where Marg can bill" in line.text
+    assert "Draw it up with `recall quarantine draft`." in line.text
+    assert format_inr(line.rupees) in line.text
 
 
 def test_the_recall_line_values_the_units_still_with_chemists_at_cost(stock, recall, records):

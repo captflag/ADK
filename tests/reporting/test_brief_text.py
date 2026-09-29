@@ -20,11 +20,11 @@ def test_the_brief_numbers_five_lines_and_names_the_rest_with_their_figures():
     assert text.splitlines() == [
         "Batchward brief for Tue 01/09/2026",
         "1. recall line",
-        "2. do not bill line",
-        "3. claims closing line",
-        "4. to order line",
-        "5. credit owed line",
-        "Also: expiring ₹6,000; dead stock ₹7,000; overcharged ₹8,000",
+        "2. still billable line",
+        "3. do not bill line",
+        "4. claims closing line",
+        "5. to order line",
+        "Also: credit owed ₹6,000; expiring ₹7,000; dead stock ₹8,000; overcharged ₹9,000",
     ]
 
 
@@ -54,8 +54,8 @@ def test_the_headline_is_one_line_of_the_topics_shown_and_what_waits():
     lines = tuple(line(topic, 150000) for topic in Topic)
     headline = Brief(ON, lines, (waiting(1), waiting(2))).headline()
     assert headline == (
-        "Recall ₹1,50,000 · Do not bill ₹1,50,000 · Claims closing ₹1,50,000 · "
-        "To order ₹1,50,000 · Credit owed ₹1,50,000 · 2 waiting for approval"
+        "Recall ₹1,50,000 · Still billable ₹1,50,000 · Do not bill ₹1,50,000 · "
+        "Claims closing ₹1,50,000 · To order ₹1,50,000 · 2 waiting for approval"
     )
     assert Brief(ON, (), ()).headline() == "Nothing needs acting on today"
     assert "\n" not in headline
