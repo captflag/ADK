@@ -141,6 +141,15 @@ business data. What exists so far:
   their last writing and as an approved template otherwise, followed by each
   waiting request with its buttons
   ([ADR 0021](docs/adr/0021-morning-brief-worked-out-in-python.md)).
+- **Blocks that reach the till**: a block stops Batchward selling a batch and
+  stops nothing else, so every unit of a blocked batch still sitting in a godown
+  Marg bills from is moved to a quarantine godown by a transfer voucher Marg
+  imports — `TO` out of the godown it leaves, `TI` into the quarantine one. It is
+  made only on approval, drafted again when the answer comes back, and recorded,
+  so stock whose hold is later lifted goes back to the very godown it came from.
+  Nothing has moved until somebody imports the voucher, and `recall quarantine
+  list` goes on saying so, naming the transfer that is waiting
+  ([ADR 0029](docs/adr/0029-a-block-reaches-billing-as-a-transfer.md)).
 - **Published notifications read as published**: an NPPA notification or a
   CDSCO drug alert list is read from the PDF itself — its text layer, in plain
   Python, with nothing new to install — and the table it prints is found by its
@@ -154,8 +163,7 @@ business data. What exists so far:
 - **Batchward's own records**: recall notices, blocks and their release are kept
   in a SQLite database of their own, which refuses any edit or deletion
   ([ADR 0010](docs/adr/0010-own-records-database.md)). Receiving a notice and
-  blocking its batch happen in one transaction. Marg still does the billing and
-  does not yet see these blocks.
+  blocking its batch happen in one transaction.
 - **A first agent team on Google ADK**: a desk that routes questions to an
   analyst, a forecaster and a reporter. Their tools are read-only, and a
   Numbers Guard plugin holds back any answer quoting a figure or batch number
@@ -203,6 +211,10 @@ uv run batchward recall status --marg sim-out/marg.sqlite --records sim-out/reco
 uv run batchward recall list --records sim-out/records.sqlite
 ```
 
+`batchward recall quarantine list` shows blocked stock still sitting where Marg
+can bill it, and `recall quarantine draft --out <folder>` draws up the transfer
+voucher for Marg's import and puts it up for approval; the quarantine godown must
+be named in `BATCHWARD_UNSELLABLE_LOCATIONS`, or the transfer is refused.
 `batchward recall receive` records a new notice and blocks what it names
 exactly; `batchward recall release` lifts a block, which stays on record.
 `batchward recall notices` drafts a notice for each chemist still holding the
