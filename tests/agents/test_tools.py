@@ -58,6 +58,7 @@ def test_tool_parameters_and_required_arguments_are_what_the_model_is_told():
         "morning_brief": ([], []),
         "order_suggestions": (["company_id", "limit"], []),
         "price_guard_summary": (["limit"], []),
+        "quarantine_status": (["limit"], []),
         "recall_status": (["batch_no"], ["batch_no"]),
         "rule65_records_check": (["limit"], []),
         "stock_health_summary": ([], []),
@@ -213,6 +214,35 @@ def test_recall_status_reports_the_block_the_clock_and_what_is_outstanding(recor
     assert batch["chemists_still_holding"] == 38
     assert len(batch["largest_outstanding"]) == 10
     assert notice["raised_for_review"] == []
+
+
+def test_quarantine_status_reports_blocked_stock_the_biller_can_still_reach(recorded, recall):
+    status = tools.quarantine_status()
+    json.dumps(status)
+    assert status["quarantine_godown"] == "QUAR"
+    assert status["batches_still_billable"] == 1
+    assert status["units_still_billable"] == recall.units_on_hand
+    assert status["units_a_transfer_already_covers"] == 0
+    assert status["transfers_drawn_up"] == []
+    (line,) = status["stock"]
+    assert (line["batch_no"], line["units"]) == ("AZ4021", recall.units_on_hand)
+    assert line["hold"].startswith("H")
+    assert "recall notice" in line["why_blocked"]
+    assert "moved to a godown it does not sell from" in status["rule"]
+
+
+def test_quarantine_status_says_when_nothing_is_blocked(stock, tmp_path):
+    with RecordStore(tmp_path / "records.sqlite"):
+        pass
+    with use(stock, records=tmp_path / "records.sqlite"):
+        status = tools.quarantine_status()
+    assert (status["batches_still_billable"], status["units_still_billable"]) == (0, 0)
+    assert status["stock"] == []
+
+
+def test_quarantine_status_needs_the_records(stock):
+    with use(stock, records=None):
+        assert "no records" in tools.quarantine_status()["error"]
 
 
 def test_recall_status_shows_a_lifted_block(recorded):

@@ -40,6 +40,8 @@ from batchward.compliance.prices import (
     overcharge_exposure,
     price_rises,
 )
+from batchward.compliance.quarantine import GODOWN as QUARANTINE_GODOWN
+from batchward.compliance.quarantine import blocked_and_sellable
 from batchward.compliance.recall_report import RecallReport
 from batchward.compliance.registrar import keep_from, rule65_check
 from batchward.core.clock import ist_date, ist_datetime
@@ -440,6 +442,60 @@ def _brand(data: StockData, item_id: str) -> str:
 
 
 _NOT_LEGAL_ADVICE = "Batchward's reading of the price rules, not legal advice"
+
+
+def quarantine_status(limit: int = 10) -> dict:
+    """Show blocked stock that is still sitting in a godown the billing system sells from, so a
+    bill could still go out for it: how many units and what they are worth at cost, batch by
+    batch with the hold that blocked them and the godown they are in; and the transfers drawn up
+    to move them, which do nothing until somebody imports them into Marg. Use this for whether a
+    recalled or blocked batch can still be billed, and for what to do about it."""
+    data = current()
+    path = records_path()
+    if path is None or not path.is_file():
+        return {"error": "no records are available, so no hold can be checked"}
+    try:
+        with RecordStore(path, create=False) as store:
+            log = store.hold_log()
+            made = store.transfers()
+            moved = store.quarantine_moves()
+    except (RecordsError, sqlite3.Error) as error:
+        return {"error": f"the records cannot be read: {error}"}
+    still = blocked_and_sellable(log, data.ledger, data.locations)
+    costs = batch_costs(data.ledger)
+    at_cost = sum((costs.get(move.batch, Decimal(0)) * move.units for move in still), Decimal(0))
+    covered = {(move.batch, move.from_location) for move in moved}
+    return {
+        "as_of": data.today.isoformat(),
+        "quarantine_godown": QUARANTINE_GODOWN,
+        "batches_still_billable": len({move.batch for move in still}),
+        "units_still_billable": sum(move.units for move in still),
+        "value_at_cost": _money(at_cost),
+        "units_a_transfer_already_covers": sum(
+            move.units for move in still if (move.batch, move.from_location) in covered
+        ),
+        "stock": [
+            {
+                "batch_no": move.batch.batch_no,
+                "brand": _brand(data, move.batch.item_id),
+                "expiry": format_expiry(move.batch.expiry),
+                "godown": move.from_location,
+                "units": move.units,
+                "hold": move.hold_id,
+                "why_blocked": move.reason,
+            }
+            for move in still[: _limit(limit)]
+        ],
+        "transfers_drawn_up": [
+            {"number": number, "godown": godown, "on": on.isoformat()}
+            for number, godown, on in made
+        ],
+        "rule": (
+            "a hold stops Batchward selling a batch; the billing system only stops when the "
+            "stock has been moved to a godown it does not sell from, which needs the transfer "
+            "voucher `recall quarantine draft` writes to be imported"
+        ),
+    }
 
 
 def price_guard_summary(limit: int = 10) -> dict:
@@ -927,6 +983,7 @@ ANALYST_TOOLS = (
     item_stock,
     trace_batch_number,
     recall_status,
+    quarantine_status,
     price_guard_summary,
     check_item_prices,
     rule65_records_check,
