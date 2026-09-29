@@ -87,6 +87,17 @@ def load_marg(
 _installed: StockData | None = None
 
 
+def unsellable_locations() -> frozenset[str]:
+    """The godowns stock is never sold from, from ``BATCHWARD_UNSELLABLE_LOCATIONS``.
+
+    Every command that reads Marg needs the same answer: a quarantine godown is
+    only a quarantine godown if everything agrees that nothing is sold from it
+    (ADR 0029).
+    """
+    named = os.environ.get("BATCHWARD_UNSELLABLE_LOCATIONS", "RETURNS")
+    return frozenset(part.strip() for part in named.split(",") if part.strip())
+
+
 def current() -> StockData:
     """The data tools should read: installed data, or the configured Marg database."""
     global _installed
@@ -98,11 +109,10 @@ def current() -> StockData:
                 "`batchward demo-marg sim-out/marg.sqlite`"
             )
         today = os.environ.get("BATCHWARD_TODAY")
-        unsellable = os.environ.get("BATCHWARD_UNSELLABLE_LOCATIONS", "RETURNS")
         _installed = load_marg(
             Path(path),
             today=date.fromisoformat(today) if today else None,
-            unsellable=frozenset(s.strip() for s in unsellable.split(",") if s.strip()),
+            unsellable=unsellable_locations(),
         )
     return _installed
 
