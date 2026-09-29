@@ -1472,7 +1472,7 @@ def test_ceilings_equivalents_refuses_a_name_that_needs_no_equivalence(tmp_path,
 def test_evals_lists_every_case_and_what_it_checks(capsys):
     assert main(["evals", "--list"]) == 0
     printed = capsys.readouterr().out
-    assert "13 cases:" in printed
+    assert "14 cases:" in printed
     assert "  stock-health" in printed
     assert "    asks    How is my stock doing?" in printed
     assert "    checks  quotes stock_health_summary.stock_value.formatted" in printed

@@ -116,6 +116,18 @@ CASES: tuple[Case, ...] = (
         ),
     ),
     Case(
+        name="still-billable",
+        question="Could we still bill the recalled batch by mistake?",
+        about="blocked stock the billing system can still reach is reported, with what to do",
+        needs=("recall",),
+        checks=(
+            AnsweredBy("analyst"),
+            Calls("quarantine_status"),
+            NeverSays(*ACTED),
+            NotHeldBack(),
+        ),
+    ),
+    Case(
         name="morning-brief",
         question="Give me the morning brief.",
         about="the brief is relayed in the order the tool returns it, with its figures",
